@@ -354,9 +354,18 @@ class Sequential(Model, containers.Sequential):
         self.y_test = self.get_output(train=False)
 
         # target of model
-        self.y = T.zeros_like(self.y_train)
+        if loss == "categorical_crossentropy_hot":
+            self.y = T.imatrix() #dtype='int32')
+            # if self.y_train.ndim == 3:
+            #     self.y = T.matrix(dtype='int32')
+            # elif self.y_train.ndim == 2:
+            #     self.y = T.vector(dtype='int32')
+            # else:
+            #     raise Exception("Invalid output dimension for loss=%s"%loss)
+        else:
+            self.y = T.zeros_like(self.y_train)
 
-        self.weights = T.ones_like(self.y_train)
+        self.weights = T.ones_like(self.y)
 
         if hasattr(self.layers[-1], "get_output_mask"):
             mask = self.layers[-1].get_output_mask()
@@ -370,9 +379,12 @@ class Sequential(Model, containers.Sequential):
         self.y.name = 'y'
 
         if class_mode == "categorical":
-            train_accuracy = T.mean(T.eq(T.argmax(self.y, axis=-1), T.argmax(self.y_train, axis=-1)))
-            test_accuracy = T.mean(T.eq(T.argmax(self.y, axis=-1), T.argmax(self.y_test, axis=-1)))
-
+            if loss == "categorical_crossentropy_hot":
+                train_accuracy = T.mean(T.eq(self.y, T.argmax(self.y_train, axis=-1)))
+                test_accuracy = T.mean(T.eq(self.y, T.argmax(self.y_test, axis=-1)))
+            else:
+                train_accuracy = T.mean(T.eq(T.argmax(self.y, axis=-1), T.argmax(self.y_train, axis=-1)))
+                test_accuracy = T.mean(T.eq(T.argmax(self.y, axis=-1), T.argmax(self.y_test, axis=-1)))
         elif class_mode == "binary":
             train_accuracy = T.mean(T.eq(self.y, T.round(self.y_train)))
             test_accuracy = T.mean(T.eq(self.y, T.round(self.y_test)))
@@ -573,8 +585,8 @@ class Graph(Model, containers.Graph):
         ys_train = []
         ys_test = []
         weights = []
-        train_loss = 0.
-        test_loss = 0.
+        train_loss = 0.# T.zeros([])
+        test_loss = 0. #T.zeros([])
         for output_name in self.output_order:
             loss_fn = loss[output_name]
             output = self.outputs[output_name]
