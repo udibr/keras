@@ -574,7 +574,11 @@ class Sequential(Model, containers.Sequential):
         for k in range(f.attrs['nb_layers']):
             g = f['layer_{}'.format(k)]
             weights = [g['param_{}'.format(p)] for p in range(g.attrs['nb_params'])]
-            self.layers[k].set_weights(weights)
+            try:
+                self.layers[k].set_weights(weights)
+            except:
+                print('Keras weight mismatch at layer %d, aborting weight load'%k)
+                break
         f.close()
 
 
