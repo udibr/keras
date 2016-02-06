@@ -1324,7 +1324,7 @@ class Graph(Model, containers.Graph):
 
     def fit_generator(self, generator, samples_per_epoch, nb_epoch,
                       verbose=1, callbacks=[],
-                      validation_data=None, validation_batch_size=128,
+                      validation_data=None,
                       class_weight={}, nb_worker=1):
         '''Fit a model on data generated batch-by-batch by a Python generator.
         The generator is run in parallel to the model, for efficiency,
@@ -1350,7 +1350,6 @@ class Graph(Model, containers.Graph):
                 to appropriate numpy arrays to be used as
                 held-out validation data.
                 All arrays should contain the same number of samples.
-            validation_batch_size:  int.
             class_weight: dictionary mapping class indices to a weight
                 for the class.
             nb_worker: integer, number of workers to use for running
@@ -1506,7 +1505,7 @@ class Graph(Model, containers.Graph):
                             val_outs = self.evaluate(data,
                                                      sample_weight=sample_weight,
                                                      verbose=0,
-                                                     validation_batch_size)
+                                                     batch_size=batch_size)
                         if type(val_outs) != list:
                             val_outs = [val_outs]
                         # same labels assumed
