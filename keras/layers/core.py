@@ -137,7 +137,15 @@ class Layer(object):
         # if layer is not connected (e.g. input layer),
         # input shape can be set manually via _input_shape attribute.
         if hasattr(self, 'previous'):
-            return self.previous.output_shape
+            if hasattr(self, 'shape_cache') and self.cache_enabled:
+                previous_layer_id = id(self.previous)
+                if previous_layer_id in self.shape_cache:
+                    return self.shape_cache[previous_layer_id]
+            previous_size = self.previous.output_shape
+            if hasattr(self, 'shape_cache') and self.cache_enabled:
+                previous_layer_id = id(self.previous)
+                self.shape_cache[previous_layer_id] = previous_size
+            return previous_size
         elif hasattr(self, '_input_shape'):
             return self._input_shape
         else:
@@ -230,7 +238,7 @@ class Layer(object):
                                              str(len(weights)) + ' provided weights)')
         for p, w in zip(params, weights):
             if K.get_value(p).shape != w.shape:
-                raise Exception('Layer shape %s not compatible with weight shape %s.' % (K.get_value(p).shape, w.shape))
+                raise Exception('Layer weight shape %s not compatible with provided weight shape %s.' % (K.get_value(p).shape, w.shape))
             K.set_value(p, w)
 
     def get_weights(self):
@@ -349,11 +357,12 @@ class Merge(Layer):
     '''Merge the output of a list of layers or containers into a single tensor.
 
     # Arguments
-        mode: one of {sum, mul, concat, ave, dot}.
+        mode: one of {sum, mul, concat, ave, join, cos, dot}.
             sum: sum the outputs (shapes must match)
             mul: multiply the outputs element-wise (shapes must match)
             concat: concatenate the outputs along the axis specified by `concat_axis`
             ave: average the outputs (shapes must match)
+            join: places the outputs in an OrderedDict (inputs must be named)
         concat_axis: axis to use in `concat` mode.
         dot_axes: axis or axes to use in `dot` mode
             (see [the Numpy documentation](http://docs.scipy.org/doc/numpy-1.10.1/reference/generated/numpy.tensordot.html) for more details).
@@ -526,8 +535,8 @@ class Merge(Layer):
             return output
         elif self.mode == 'cos':
             if K._BACKEND != 'theano':
-                raise Exception('"dot" merge mode will only work with Theano.')
-            import theano
+                raise Exception('"cos" merge mode will only work with Theano.')
+            from theano import tensor as T
             l1 = self.layers[0].get_output(train)
             l2 = self.layers[1].get_output(train)
             output = T.batched_tensordot(l1, l2, self.dot_axes) / T.sqrt(T.batched_tensordot(l1, l1, self.dot_axes) * T.batched_tensordot(l2, l2, self.dot_axes))
