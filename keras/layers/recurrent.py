@@ -226,8 +226,7 @@ class Recurrent(Layer):
                                              unroll=self.unroll,
                                              input_length=input_shape[1])
         if self.stateful:
-            if not hasattr(self, 'updates'): # keep updates from sub-class
-                self.updates = []
+            self.updates = []
             for i in range(len(states)):
                 self.updates.append((self.states[i], states[i]))
 
@@ -758,6 +757,14 @@ class LSTM(Recurrent):
                 self.non_trainable_weights += (running_mean.values() +
                                                running_std.values())
 
+            self.batch_norm_states_start = len(self.states)
+            for fld in ['recurrent', 'input', 'output']:
+                for slc in ['i', 'f', 'c', 'o']:
+                    self.states.append(self.running_mean[fld][slc])
+                    self.states.append(self.running_std[fld][slc])
+                    if fld == 'output':
+                        break
+
     def reset_states(self):
         assert self.stateful, 'Layer must be stateful.'
         input_shape = self.input_spec[0].shape
@@ -772,6 +779,24 @@ class LSTM(Recurrent):
         else:
             self.states = [K.zeros((input_shape[0], self.output_dim)),
                            K.zeros((input_shape[0], self.output_dim))]
+
+    def get_initial_states(self, x):
+        if not self.batch_norm:
+            return super(LSTM,self).get_initial_states(x)
+
+        # build an all-zero tensor of shape (samples, output_dim)
+        initial_state = K.zeros_like(x)  # (samples, timesteps, input_dim)
+        initial_state = K.sum(initial_state, axis=1)  # (samples, input_dim)
+        reducer = K.zeros((self.input_dim, self.output_dim))
+        initial_state = K.dot(initial_state, reducer)  # (samples, output_dim)
+        initial_states = [initial_state for _ in range(self.batch_norm_states_start)]
+        for fld in ['recurrent', 'input', 'output']:
+            for slc in ['i', 'f', 'c', 'o']:
+                initial_states.append(self.running_mean[fld][slc])
+                initial_states.append(self.running_std[fld][slc])
+                if fld == 'output':
+                    break
+        return initial_states
 
     def preprocess_input(self, x):
         if self.consume_less == 'cpu':
@@ -804,7 +829,7 @@ class LSTM(Recurrent):
         beta = self.betas[fld].get(slc)
         axis = -1  # axis along which to normalize (we have mode=0)
 
-        input_shape = (self.input_shape[0], self.output_dim)
+        input_shape = (self.input_spec[0].shape[0], self.output_dim)
         reduction_axes = list(range(len(input_shape)))
         del reduction_axes[axis]
         broadcast_shape = [1] * len(input_shape)
@@ -817,20 +842,16 @@ class LSTM(Recurrent):
                      axis=reduction_axes)
         std = K.sqrt(std)
         brodcast_std = K.reshape(std, broadcast_shape)
-        mean_update = (self.momentum * self.running_mean[fld][slc] +
+        mean_update = (self.momentum * self.step_running_mean[fld][slc] +
                        (1 - self.momentum) * m)
-        std_update = (self.momentum * self.running_std[fld][slc] +
+        std_update = (self.momentum * self.step_running_std[fld][slc] +
                       (1 - self.momentum) * std)
-        if not hasattr(self, 'updates'):
-            self.updates = []
-        self.updates += [(self.running_mean[fld][slc], mean_update),
-                         (self.running_std[fld][slc], std_update)]
 
         X_normed = (X - brodcast_m) / (brodcast_std + self.epsilon)
 
         # case: test mode (uses running averages)
-        brodcast_running_mean = K.reshape(self.running_mean[fld][slc], broadcast_shape)
-        brodcast_running_std = K.reshape(self.running_std[fld][slc],
+        brodcast_running_mean = K.reshape(self.step_running_mean[fld][slc], broadcast_shape)
+        brodcast_running_std = K.reshape(self.step_running_std[fld][slc],
                                  broadcast_shape)
         X_normed_running = ((X - brodcast_running_mean) /
                         (brodcast_running_std + self.epsilon))
@@ -841,13 +862,34 @@ class LSTM(Recurrent):
         out = K.reshape(gamma, broadcast_shape) * X_normed
         if beta is not None:
             out += K.reshape(beta, broadcast_shape)
+
+        self.update_running_mean[fld][slc] = mean_update
+        self.update_running_std[fld][slc] = std_update
         return out
 
     def step(self, x, states):
-        h_tm1 = states[0]
-        c_tm1 = states[1]
-        B_U = states[2]
-        B_W = states[3]
+        # unpack states to its variables
+        i = 0
+        h_tm1 = states[i] ; i += 1
+        c_tm1 = states[i] ; i += 1
+        if self.batch_norm:
+            self.step_running_mean = {}
+            self.step_running_std = {}
+            self.update_running_mean = {}
+            self.update_running_std = {}
+            for fld in ['recurrent', 'input', 'output']:
+                self.step_running_mean[fld] = {}
+                self.step_running_std[fld] = {}
+                self.update_running_mean[fld] = {}
+                self.update_running_std[fld] = {}
+                for slc in ['i', 'f', 'c', 'o']:
+                    self.step_running_mean[fld][slc] = states[i] ; i += 1
+                    self.step_running_std[fld][slc] = states[i] ; i += 1
+                    if fld == 'output':
+                        break
+        # unpack constants
+        B_U = states[i] ; i += 1
+        B_W = states[i] ; i += 1
 
         if self.consume_less == 'cpu':
             x_i = x[:, :self.output_dim]
@@ -878,7 +920,20 @@ class LSTM(Recurrent):
             self.b_o)
 
         h = o * self.activation(self.bn(c, 'output'))
-        return h, [h, c]
+
+        out_states = [h, c]
+        if self.batch_norm:
+            for fld in ['recurrent', 'input', 'output']:
+                for slc in ['i', 'f', 'c', 'o']:
+                    out_states.append(self.update_running_mean[fld][slc])
+                    out_states.append(self.update_running_std[fld][slc])
+                    if fld == 'output':
+                        break
+            del self.step_running_mean
+            del self.step_running_std
+            del self.update_running_mean
+            del self.update_running_std
+        return h, out_states
 
     def get_constants(self, x):
         constants = []
