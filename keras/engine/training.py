@@ -1385,7 +1385,7 @@ class Model(Container):
                                                class_weight=class_weight)
                 except Exception as e:
                     _stop.set()
-                    raise e
+                    raise
 
                 if type(outs) != list:
                     outs = [outs]
@@ -1487,7 +1487,7 @@ class Model(Container):
                 outs = self.test_on_batch(x, y, sample_weight=sample_weight)
             except Exception as e:
                 _stop.set()
-                raise e
+                raise
 
             if type(x) is list:
                 nb_samples = len(x[0])
@@ -1559,7 +1559,7 @@ class Model(Container):
                 outs = self.predict_on_batch(x)
             except Exception as e:
                 _stop.set()
-                raise e
+                raise
 
             if type(x) is list:
                 nb_samples = len(x[0])
