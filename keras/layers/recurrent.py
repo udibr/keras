@@ -656,6 +656,43 @@ class LSTM(Recurrent):
         input_dim = input_shape[2]
         self.input_dim = input_dim
 
+        if self.batch_norm:
+            shape = (self.output_dim,)
+            shape1 = (self.output_dim,)
+            self.gammas = {}
+            self.betas = {}
+            self.running_mean = {}
+            self.running_std = {}
+            # BN is applied in 3 inputs/outputs (fields) of the cell
+            for fld in ['recurrent', 'input', 'output']:
+                gammas = {}
+                betas = {}
+                running_mean = {}
+                running_std = {}
+                # each of the fields affects 4 locations inside the cell
+                # (except output)
+                # each location has its own BN
+                for slc in ['i', 'f', 'c', 'o']:
+                    running_mean[slc] = K.zeros(shape1,
+                                                name='{}_running_mean_{}_{}'.format(
+                                                    self.name, fld, slc))
+                    running_std[slc] = K.ones(shape1,
+                                              name='{}_running_std_{}_{}'.format(
+                                                  self.name, fld, slc))
+                    gammas[slc] = self.gamma_init(shape,
+                                                  name='{}_gamma_{}_{}'.format(
+                                                      self.name, fld, slc))
+                    if fld == 'output':
+                        betas[slc] = self.beta_init(shape,
+                                                    name='{}_beta_{}_{}'.format(
+                                                        self.name, fld, slc))
+                        break  # output has just one slice
+
+                self.gammas[fld] = gammas
+                self.betas[fld] = betas
+                self.running_mean[fld] = running_mean
+                self.running_std[fld] = running_std
+
         if self.stateful:
             self.reset_states()
         else:
@@ -718,52 +755,23 @@ class LSTM(Recurrent):
 
         if self.batch_norm:
             self.non_trainable_weights = []
-            shape = (self.output_dim,)
-            self.gammas = {}
-            self.betas = {}
-            self.running_mean = {}
-            self.running_std = {}
-            # BN is applied in 3 inputs/outputs (fields) of the cell
             for fld in ['recurrent', 'input', 'output']:
-                gammas = {}
-                betas = {}
-                running_mean = {}
-                running_std = {}
-                # each of the fields affects 4 locations inside the cell
-                # (except output)
-                # each location has its own BN
-                for slc in ['i', 'f', 'c', 'o']:
-                    running_mean[slc] = K.zeros(shape,
-                                                name='{}_running_mean_{}_{}'.format(
-                                                    self.name,fld,slc))
-                    running_std[slc] = K.ones(shape,
-                                              name='{}_running_std_{}_{}'.format(
-                                                  self.name,fld,slc))
-                    gammas[slc] = self.gamma_init(shape,
-                                                  name='{}_gamma_{}_{}'.format(
-                                                      self.name, fld, slc))
-                    if fld == 'output':
-                        betas[slc] = self.beta_init(shape,
-                                                    name='{}_beta_{}_{}'.format(
-                                                        self.name, fld, slc))
-                        break  # output has just one slice
+                self.trainable_weights += self.gammas[fld].values() + self.betas[fld].values()
+                self.non_trainable_weights += (self.running_mean[fld].values() +
+                                               self.running_std[fld].values())
 
-                self.gammas[fld] = gammas
-                self.betas[fld] = betas
-                self.running_mean[fld] = running_mean
-                self.running_std[fld] = running_std
 
-                self.trainable_weights += gammas.values() + betas.values()
-                self.non_trainable_weights += (running_mean.values() +
-                                               running_std.values())
-
-            self.batch_norm_states_start = len(self.states)
-            for fld in ['recurrent', 'input', 'output']:
-                for slc in ['i', 'f', 'c', 'o']:
-                    self.states.append(self.running_mean[fld][slc])
-                    self.states.append(self.running_std[fld][slc])
-                    if fld == 'output':
-                        break
+    def add_bn_to_states(self, states):
+        if not self.batch_norm:
+            return
+        for fld in ['recurrent', 'input', 'output']:
+            for slc in ['i', 'f', 'c', 'o']:
+                states.append(K.replace_row(self.padding,
+                                            self.running_mean[fld][slc]))
+                states.append(K.replace_row(self.padding,
+                                            self.running_std[fld][slc]))
+                if fld == 'output':
+                    break
 
     def reset_states(self):
         assert self.stateful, 'Layer must be stateful.'
@@ -779,6 +787,9 @@ class LSTM(Recurrent):
         else:
             self.states = [K.zeros((input_shape[0], self.output_dim)),
                            K.zeros((input_shape[0], self.output_dim))]
+            if self.batch_norm:
+                self.padding = K.zeros((input_shape[0], self.output_dim))
+                self.add_bn_to_states(self.states)
 
     def get_initial_states(self, x):
         if not self.batch_norm:
@@ -789,13 +800,10 @@ class LSTM(Recurrent):
         initial_state = K.sum(initial_state, axis=1)  # (samples, input_dim)
         reducer = K.zeros((self.input_dim, self.output_dim))
         initial_state = K.dot(initial_state, reducer)  # (samples, output_dim)
-        initial_states = [initial_state for _ in range(self.batch_norm_states_start)]
-        for fld in ['recurrent', 'input', 'output']:
-            for slc in ['i', 'f', 'c', 'o']:
-                initial_states.append(self.running_mean[fld][slc])
-                initial_states.append(self.running_std[fld][slc])
-                if fld == 'output':
-                    break
+        initial_states = [initial_state for _ in range(len(self.states))]
+        if self.batch_norm:
+            self.padding = initial_state
+            self.add_bn_to_states(initial_states)
         return initial_states
 
     def preprocess_input(self, x):
@@ -863,8 +871,8 @@ class LSTM(Recurrent):
         if beta is not None:
             out += K.reshape(beta, broadcast_shape)
 
-        self.update_running_mean[fld][slc] = mean_update
-        self.update_running_std[fld][slc] = std_update
+        self.out_step_running_mean[fld][slc] = mean_update
+        self.out_step_running_std[fld][slc] = std_update
         return out
 
     def step(self, x, states):
@@ -875,16 +883,16 @@ class LSTM(Recurrent):
         if self.batch_norm:
             self.step_running_mean = {}
             self.step_running_std = {}
-            self.update_running_mean = {}
-            self.update_running_std = {}
+            self.out_step_running_mean = {}
+            self.out_step_running_std = {}
             for fld in ['recurrent', 'input', 'output']:
                 self.step_running_mean[fld] = {}
                 self.step_running_std[fld] = {}
-                self.update_running_mean[fld] = {}
-                self.update_running_std[fld] = {}
+                self.out_step_running_mean[fld] = {}
+                self.out_step_running_std[fld] = {}
                 for slc in ['i', 'f', 'c', 'o']:
-                    self.step_running_mean[fld][slc] = states[i] ; i += 1
-                    self.step_running_std[fld][slc] = states[i] ; i += 1
+                    self.step_running_mean[fld][slc] = states[i][0,:] ; i += 1
+                    self.step_running_std[fld][slc] = states[i][0,:] ; i += 1
                     if fld == 'output':
                         break
         # unpack constants
@@ -923,16 +931,11 @@ class LSTM(Recurrent):
 
         out_states = [h, c]
         if self.batch_norm:
-            for fld in ['recurrent', 'input', 'output']:
-                for slc in ['i', 'f', 'c', 'o']:
-                    out_states.append(self.update_running_mean[fld][slc])
-                    out_states.append(self.update_running_std[fld][slc])
-                    if fld == 'output':
-                        break
+            self.add_bn_to_states(out_states)
             del self.step_running_mean
             del self.step_running_std
-            del self.update_running_mean
-            del self.update_running_std
+            del self.out_step_running_mean
+            del self.out_step_running_std
         return h, out_states
 
     def get_constants(self, x):
