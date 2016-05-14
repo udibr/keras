@@ -1414,6 +1414,7 @@ class Model(Container):
                         # data has already been validated
                         val_outs = self.evaluate(val_x, val_y,
                                                  sample_weight=val_sample_weights,
+                                                 batch_size=batch_size,
                                                  verbose=0)
                     if type(val_outs) is not list:
                         val_outs = [val_outs]
