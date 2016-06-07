@@ -796,9 +796,10 @@ class GRUZO(Recurrent):
             hh = self.activation(x_h + K.dot(r * h_tm1 * B_U[2], self.U_h))
         h = z * h_tm1 + (1 - z) * hh
 
-        zo = self.zoneout_h
+        zo = K.variable(self.zoneout_h)
+        zo1 = K.variable(1.-self.zoneout_h)
         h = K.in_train_phase(K.dropout(h-h_tm1, zo), h - h_tm1)
-        h = h * (1.-zo) + h_tm1
+        h = h * zo1 + h_tm1
 
         return h, [h]
 
