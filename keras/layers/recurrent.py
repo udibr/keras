@@ -797,7 +797,7 @@ class GRUZO(Recurrent):
         h = z * h_tm1 + (1 - z) * hh
 
         zo1 = K.variable(1.-self.zoneout_h)
-        h = K.in_train_phase(K.dropout(h-h_tm1, self.zoneout_h), h - h_tm1)
+        # h = K.in_train_phase(K.dropout(h-h_tm1, self.zoneout_h), h - h_tm1)
         h = h * zo1 + h_tm1
 
         return h, [h]
@@ -833,7 +833,8 @@ class GRUZO(Recurrent):
                   'U_regularizer': self.U_regularizer.get_config() if self.U_regularizer else None,
                   'b_regularizer': self.b_regularizer.get_config() if self.b_regularizer else None,
                   'dropout_W': self.dropout_W,
-                  'dropout_U': self.dropout_U}
+                  'dropout_U': self.dropout_U,
+                  'zoneout_h': self.zoneout_h}
         base_config = super(GRU, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
