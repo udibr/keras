@@ -798,7 +798,7 @@ class GRUZO(Recurrent):
 
         zo1 = K.variable(1.-self.zoneout_h)
         # h = K.in_train_phase(K.dropout(h-h_tm1, self.zoneout_h), h - h_tm1)
-        h1 = h  + h_tm1 # * zo1
+        h1 = h*(1.-self.zoneout_h)  + h_tm1 # * zo1
 
         return h1, [h1]
 
