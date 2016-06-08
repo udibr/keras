@@ -616,6 +616,8 @@ class GRU(Recurrent):
         base_config = super(GRU, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
+from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
+
 class GRUZO(Recurrent):
     '''Gated Recurrent Unit - Cho et al. 2014.
     with Zoneout https://arxiv.org/abs/1606.01305
@@ -660,8 +662,9 @@ class GRUZO(Recurrent):
         self.dropout_W, self.dropout_U = dropout_W, dropout_U
         self.zoneout_h = zoneout_h
 
-        if self.dropout_W or self.dropout_U:
+        if self.dropout_W or self.dropout_U or zoneout_h:
             self.uses_learning_phase = True
+
         super(GRUZO, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -796,11 +799,12 @@ class GRUZO(Recurrent):
             hh = self.activation(x_h + K.dot(r * h_tm1 * B_U[2], self.U_h))
         h = z * h_tm1 + (1 - z) * hh
 
-        zo1 = K.variable(1.-self.zoneout_h)
-        # h = K.in_train_phase(K.dropout(h-h_tm1, self.zoneout_h), h - h_tm1)
-        h1 = h*(1.-self.zoneout_h)  + h_tm1 # * zo1
-
-        return h1, [h1]
+        if self.zoneout_h:
+            h = K.in_train_phase(K.dropout(h-h_tm1, self.zoneout_h,
+                                           shape=(self.output_dim,)),
+                                  h - h_tm1)
+            h = h * (1.-self.zoneout_h)  + h_tm1
+        return h, [h]
 
     def get_constants(self, x):
         constants = []
@@ -1474,3 +1478,4 @@ class LSTMBN(Recurrent):
             config["momentum"] = self.momentum
         base_config = super(LSTM, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+

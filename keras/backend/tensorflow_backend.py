@@ -963,7 +963,7 @@ def tanh(x):
     return tf.nn.tanh(x)
 
 
-def dropout(x, level, seed=None):
+def dropout(x, level, seed=None, shape=None):
     '''Sets entries in `x` to zero at random,
     while scaling the entire tensor.
 
