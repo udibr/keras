@@ -402,6 +402,8 @@ class Lambda(Layer):
     def __init__(self, function, output_shape=None, arguments={}, **kwargs):
         self.function = function
         self.arguments = arguments
+        self.supports_masking = True
+
         if output_shape is None:
             self._output_shape = None
         elif type(output_shape) in {tuple, list}:
@@ -460,9 +462,9 @@ class Lambda(Layer):
 
         if isinstance(self._output_shape, python_types.LambdaType):
             if py3:
-                output_shape = marshal.dumps(self._output_shape.__code__)
+                output_shape = marshal.dumps(self._output_shape.__code__).decode('raw_unicode_escape')
             else:
-                output_shape = marshal.dumps(self._output_shape.func_code)
+                output_shape = marshal.dumps(self._output_shape.func_code).decode('raw_unicode_escape')
             output_shape_type = 'lambda'
         elif callable(self._output_shape):
             output_shape = self._output_shape.__name__
@@ -494,7 +496,7 @@ class Lambda(Layer):
         if output_shape_type == 'function':
             output_shape = globals()[config['output_shape']]
         elif output_shape_type == 'lambda':
-            output_shape = marshal.loads(config['output_shape'])
+            output_shape = marshal.loads(config['output_shape'].encode('raw_unicode_escape'))
             output_shape = python_types.FunctionType(output_shape, globals())
         else:
             output_shape = config['output_shape']

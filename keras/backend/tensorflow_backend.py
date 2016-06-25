@@ -123,6 +123,7 @@ def shape(x):
 def int_shape(x):
     '''Returns the shape of a tensor as a tuple of
     integers or None entries.
+    Note that this function only works with TensorFlow.
     '''
     shape = x.get_shape()
     return tuple([i.__int__() for i in shape])
@@ -314,17 +315,23 @@ def prod(x, axis=None, keepdims=False):
     return tf.reduce_prod(x, reduction_indices=axis, keep_dims=keepdims)
 
 
-def std(x, axis=None, keepdims=False):
-    '''Standard deviation of a tensor, alongside the specificied axis.
+def var(x, axis=None, keepdims=False):
+    '''Variance of a tensor, alongside the specified axis.
     '''
     axis = _normalize_axis(axis, ndim(x))
     if x.dtype.base_dtype == tf.bool:
         x = tf.cast(x, _FLOATX)
     m = tf.reduce_mean(x, reduction_indices=axis, keep_dims=True)
     devs_squared = tf.square(x - m)
-    return tf.sqrt(tf.reduce_mean(devs_squared,
-                                  reduction_indices=axis,
-                                  keep_dims=keepdims))
+    return tf.reduce_mean(devs_squared,
+                          reduction_indices=axis,
+                          keep_dims=keepdims)
+
+
+def std(x, axis=None, keepdims=False):
+    '''Standard deviation of a tensor, alongside the specified axis.
+    '''
+    return tf.sqrt(var(x, axis=axis, keepdims=keepdims))
 
 
 def mean(x, axis=None, keepdims=False):
@@ -344,6 +351,17 @@ def any(x, axis=None, keepdims=False):
     axis = _normalize_axis(axis, ndim(x))
     x = tf.cast(x, tf.bool)
     x = tf.reduce_any(x, reduction_indices=axis, keep_dims=keepdims)
+    return tf.cast(x, tf.uint8)
+
+
+def all(x, axis=None, keepdims=False):
+    '''Bitwise reduction (logical AND).
+
+    Returns an uint8 tensor
+    '''
+    axis = _normalize_axis(axis, ndim(x))
+    x = tf.cast(x, tf.bool)
+    x = tf.reduce_all(x, reduction_indices=axis, keep_dims=keepdims)
     return tf.cast(x, tf.uint8)
 
 
