@@ -393,14 +393,28 @@ def standardize_weights(y, sample_weight=None, class_weight=None,
         else:
             return np.ones((y.shape[0], y.shape[1]))
 
-
 def generator_queue(generator, max_q_size=10,
                     wait_time=0.05, nb_worker=1):
     '''Builds a threading queue out of a data generator.
     Used in `fit_generator`, `evaluate_generator`, `predict_generator`.
     '''
-    q = queue.Queue()
     _stop = threading.Event()
+
+    if max_q_size == 0:
+        class DummyQueue(object):
+            def __init__(self, generator):
+                self.generator = generator
+
+            def empty(self):
+                return False
+
+            def get(self):
+                return next(self.generator)
+
+        q = DummyQueue()
+        return q, _stop
+
+    q = queue.Queue()
 
     def data_generator_task():
         while not _stop.is_set():
