@@ -1269,6 +1269,7 @@ class Model(Container):
     def fit_generator(self, generator, samples_per_epoch, nb_epoch,
                       verbose=1, callbacks=[],
                       validation_data=None, nb_val_samples=None,
+                      val_callbacks=None,
                       class_weight={}, max_q_size=10):
         '''Fits the model on data generated batch-by-batch by
         a Python generator.
@@ -1362,6 +1363,18 @@ class Model(Container):
         })
         callbacks.on_train_begin()
 
+        if val_callbacks:
+            val_callbacks = cbks.CallbackList(val_callbacks)
+            val_callbacks._set_model(callback_model)
+            val_callbacks._set_params({
+                'nb_epoch': nb_epoch,
+                'nb_sample': samples_per_epoch,
+                'verbose': verbose,
+                'do_validation': do_validation,
+                'metrics': callback_metrics,
+            })
+            val_callbacks.on_train_begin()
+
         if do_validation and not val_gen:
             if len(validation_data) == 2:
                 val_x, val_y = validation_data
@@ -1452,7 +1465,8 @@ class Model(Container):
                     if val_gen:
                         val_outs = self.evaluate_generator(validation_data,
                                                            nb_val_samples,
-                                                           max_q_size=max_q_size)
+                                                           max_q_size=max_q_size,
+                                                           callbacks=val_callbacks)
                     else:
                         # no need for try/except because
                         # data has already been validated
@@ -1473,9 +1487,11 @@ class Model(Container):
 
         _stop.set()
         callbacks.on_train_end()
+        if val_callbacks:
+            val_callbacks.on_train_end()
         return self.history
 
-    def evaluate_generator(self, generator, val_samples, max_q_size=10):
+    def evaluate_generator(self, generator, val_samples, max_q_size=10, val_callbacks=None):
         '''Evaluates the model on a data generator. The generator should
         return the same kind of data as accepted by `test_on_batch`.
 
@@ -1502,6 +1518,8 @@ class Model(Container):
         weights = []
         data_gen_queue, _stop = generator_queue(generator, max_q_size=max_q_size)
 
+        if val_callbacks:
+            val_callbacks.on_train_begin()
         while processed_samples < val_samples:
             generator_output = None
             while not _stop.is_set():
@@ -1526,11 +1544,15 @@ class Model(Container):
                 raise Exception('output of generator should be a tuple '
                                 '(x, y, sample_weight) '
                                 'or (x, y). Found: ' + str(generator_output))
+            if val_callbacks:
+                val_callbacks.on_batch_begin()
             try:
                 outs = self.test_on_batch(x, y, sample_weight=sample_weight)
             except:
                 _stop.set()
                 raise
+            if val_callbacks:
+                val_callbacks.on_batch_end()
 
             if type(x) is list:
                 nb_samples = len(x[0])
@@ -1544,6 +1566,8 @@ class Model(Container):
             weights.append(nb_samples)
 
         _stop.set()
+        if val_callbacks:
+            val_callbacks.on_train_end()
         if type(outs) is not list:
             return np.average(np.asarray(all_outs),
                               weights=weights)
