@@ -234,6 +234,9 @@ def collect_metrics(metrics, output_names):
 
 
 def collect_trainable_weights(layer):
+    '''Collects all `trainable_weights` attributes,
+    excluding any sublayers where `trainable` is set the `False`.
+    '''
     trainable = getattr(layer, 'trainable', True)
     if not trainable:
         return []
@@ -249,6 +252,9 @@ def collect_trainable_weights(layer):
             weights += collect_trainable_weights(sublayer)
     else:
         weights += layer.trainable_weights
+    # dedupe weights
+    weights = list(set(weights))
+    weights.sort(key=lambda x: x.name)
     return weights
 
 
@@ -631,7 +637,7 @@ class Model(Container):
                 if metric == 'accuracy' or metric == 'acc':
                     # custom handling of accuracy (because of class mode duality)
                     output_shape = self.internal_output_shapes[i]
-                    if output_shape[-1] == 1:
+                    if output_shape[-1] == 1 or self.loss_functions[i] == objectives.binary_crossentropy:
                         # case: binary accuracy
                         self.metrics.append(metrics_module.binary_accuracy(y_true, y_pred))
                     elif self.loss_functions[i] == objectives.sparse_categorical_crossentropy:
@@ -677,10 +683,7 @@ class Model(Container):
                 inputs = self.inputs + self.targets + self.sample_weights
 
             # get trainable weights
-            trainable_weights = []
-            for layer in self.layers:
-                trainable_weights += collect_trainable_weights(layer)
-
+            trainable_weights = collect_trainable_weights(self)
             training_updates = self.optimizer.get_updates(trainable_weights, self.constraints, self.total_loss)
             updates = self.updates + training_updates
 
