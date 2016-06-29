@@ -408,14 +408,11 @@ def generator_queue(generator, max_q_size=10,
 
     if max_q_size == 0:
         class DummyQueue(object):
-            def __init__(self, generator):
-                self.generator = generator
-
             def empty(self):
                 return False
 
             def get(self):
-                return next(self.generator)
+                return next(generator)
 
         q = DummyQueue()
         return q, _stop
