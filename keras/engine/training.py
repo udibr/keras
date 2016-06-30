@@ -1463,7 +1463,7 @@ class Model(Container):
                         val_outs = self.evaluate_generator(validation_data,
                                                            nb_val_samples,
                                                            max_q_size=max_q_size,
-                                                           callbacks=val_callbacks)
+                                                           val_callbacks=val_callbacks)
                     else:
                         # no need for try/except because
                         # data has already been validated
