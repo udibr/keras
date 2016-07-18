@@ -9,6 +9,17 @@ from .common import _FLOATX, _EPSILON, _IMAGE_DIM_ORDERING
 
 _SESSION = None
 _LEARNING_PHASE = tf.placeholder(dtype='uint8', name='keras_learning_phase')  # 0 = test, 1 = train
+_MANUAL_VAR_INIT = False
+
+
+def manual_variable_initialization(value):
+    '''Whether variables should be initialized
+    as they are instantiated (default), or if
+    the user should handle the initialization
+    (e.g. via tf.initialize_all_variables()).
+    '''
+    global _MANUAL_VAR_INIT
+    _MANUAL_VAR_INIT = value
 
 
 def learning_phase():
@@ -61,6 +72,23 @@ def set_session(session):
 
 # VARIABLE MANIPULATION
 
+def _convert_string_dtype(dtype):
+    if dtype == 'float16':
+        return tf.float16
+    if dtype == 'float32':
+        return tf.float32
+    elif dtype == 'float64':
+        return tf.float64
+    elif dtype == 'int32':
+        return tf.int32
+    elif dtype == 'int64':
+        return tf.int64
+    elif dtype == 'uint8':
+        return tf.int8
+    else:
+        raise ValueError('Unsupported dtype:', dtype)
+
+
 def variable(value, dtype=_FLOATX, name=None):
     '''Instantiates a tensor.
 
@@ -72,7 +100,9 @@ def variable(value, dtype=_FLOATX, name=None):
     # Returns
         Tensor variable instance.
     '''
-    v = tf.Variable(np.asarray(value, dtype=dtype), name=name)
+    v = tf.Variable(value, dtype=_convert_string_dtype(dtype), name=name)
+    if _MANUAL_VAR_INIT:
+        return v
     if tf.get_default_graph() is get_session().graph:
         try:
             get_session().run(v.initializer)
@@ -154,13 +184,15 @@ def eval(x):
 def zeros(shape, dtype=_FLOATX, name=None):
     '''Instantiates an all-zeros tensor variable.
     '''
-    return variable(np.zeros(shape), dtype, name)
+    return variable(lambda: tf.cast(tf.constant_initializer(0.)(shape), dtype),
+                    dtype, name)
 
 
 def ones(shape, dtype=_FLOATX, name=None):
     '''Instantiates an all-ones tensor variable.
     '''
-    return variable(np.ones(shape), dtype, name)
+    return variable(lambda: tf.cast(tf.constant_initializer(1.)(shape), dtype),
+                    dtype, name)
 
 
 def eye(size, dtype=_FLOATX, name=None):
@@ -223,19 +255,28 @@ def batch_dot(x, y, axes=None):
     If the number of dimensions is reduced to 1, we use `expand_dims` to
     make sure that ndim is at least 2.
 
-    # Example
-        Assume x = [[1, 2], [3, 4]]   and y = [[5, 6], [7, 8]]
-        batch_dot(x, y, axes=1) = [[17, 53]] which is the main diagonal
-        of x.dot(y.T), although we never have to calculate the off-diagonal
-        elements.
-
-
     # Arguments
         x, y: tensors with ndim >= 2
         axes: list (or single) int with target dimensions
 
     # Returns
-        Tensor with ndim >= 2
+        A tensor with shape equal to the concatenation of x's shape (less the dimension that was summed over) and y's shape (less the batch dimension and the dimension that was summed over). If the final rank is 1, we reshape it to (batch_size, 1).
+
+    # Examples
+        Assume x = [[1, 2], [3, 4]]   and y = [[5, 6], [7, 8]]
+        batch_dot(x, y, axes=1) = [[17, 53]] which is the main diagonal
+        of x.dot(y.T), although we never have to calculate the off-diagonal
+        elements.
+       
+        Shape inference:
+        Let x's shape be (100, 20) and y's shape be (100, 30, 20). If dot_axes is (1, 2), to find the output shape of resultant tensor, loop through each dimension in x's shape and y's shape:
+        x.shape[0] : 100 : append to output shape
+        x.shape[1] : 20 : do not append to output shape, dimension 1 of x has been summed over. (dot_axes[0] = 1)
+        y.shape[0] : 100 : do not append to output shape, always ignore first dimension of y
+        y.shape[1] : 30 : append to output shape
+        y.shape[2] : 20 : do not append to output shape, dimension 2 of y has been summed over. (dot_axes[1] = 2)
+
+        output_shape = (100, 30)
     '''
     if type(axes) == int:
         axes = (axes, axes)
@@ -479,6 +520,42 @@ def cos(x):
     return tf.cos(x)
 
 
+def normalize_batch_in_training(x, gamma, beta,
+                                reduction_axes, epsilon=0.0001):
+    '''Compute mean and std for batch then apply batch_normalization on batch.
+    '''
+    mean, std = tf.nn.moments(x, reduction_axes,
+                              shift=None, name=None, keep_dims=False)
+    if sorted(reduction_axes) == range(ndim(x))[:-1]:
+        normed = tf.nn.batch_normalization(x, mean, std,
+                                           beta, gamma,
+                                           epsilon)
+    else:
+        # need broadcasting
+        target_shape = []
+        for axis in range(ndim(x)):
+            if axis in reduction_axes:
+                target_shape.append(1)
+            else:
+                target_shape.append(tf.shape(x)[axis])
+        target_shape = tf.pack(target_shape)
+
+        broadcast_mean = tf.reshape(mean, target_shape)
+        broadcast_std = tf.reshape(std, target_shape)
+        broadcast_gamma = tf.reshape(gamma, target_shape)
+        broadcast_beta = tf.reshape(beta, target_shape)
+        normed = tf.nn.batch_normalization(x, broadcast_mean, broadcast_std,
+                                           broadcast_beta, broadcast_gamma,
+                                           epsilon)
+    return normed, mean, std
+
+
+def batch_normalization(x, mean, std, beta, gamma, epsilon=0.0001):
+    '''Apply batch normalization on x given mean, std, beta and gamma.
+    '''
+    return tf.nn.batch_normalization(x, mean, std, beta, gamma, epsilon)
+
+
 # SHAPE OPERATIONS
 
 def concatenate(tensors, axis=-1):
@@ -666,6 +743,7 @@ def batch_set_value(tuples):
         ops = [tf.assign(x, np.asarray(value)) for x, value in tuples]
         get_session().run(ops)
 
+
 # GRAPH MANIPULATION
 
 class Function(object):
@@ -710,6 +788,13 @@ def gradients(loss, variables):
     with regard to `loss`.
     '''
     return tf.gradients(loss, variables)
+
+
+def stop_gradient(variables):
+    '''Returns `variables` but with zero gradient with respect to every other
+    variables.
+    '''
+    return tf.stop_gradient(variables)
 
 
 # CONTROL FLOW
@@ -1086,7 +1171,7 @@ def _postprocess_conv3d_output(x, dim_ordering):
 
 def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
            dim_ordering=_IMAGE_DIM_ORDERING,
-           image_shape=None, filter_shape=None):
+           image_shape=None, filter_shape=None, filter_dilation=(1, 1)):
     '''2D convolution.
 
     # Arguments
@@ -1103,9 +1188,13 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
     x = _preprocess_conv2d_input(x, dim_ordering)
     kernel = _preprocess_conv2d_kernel(kernel, dim_ordering)
     padding = _preprocess_border_mode(border_mode)
-    strides = (1,) + strides + (1,)
-
-    x = tf.nn.conv2d(x, kernel, strides, padding=padding)
+    if filter_dilation == (1, 1):
+        strides = (1,) + strides + (1,)
+        x = tf.nn.conv2d(x, kernel, strides, padding=padding)
+    else:
+        assert filter_dilation[0] == filter_dilation[1]
+        assert strides == (1, 1), 'Invalid strides for dilated convolution'
+        x = tf.nn.atrous_conv2d(x, kernel, filter_dilation[0], padding=padding)
     return _postprocess_conv2d_output(x, dim_ordering)
 
 
@@ -1170,8 +1259,8 @@ def separable_conv2d(x, depthwise_kernel, pointwise_kernel, strides=(1, 1),
     padding = _preprocess_border_mode(border_mode)
     strides = (1,) + strides + (1,)
 
-    tf.nn.separable_conv2d(x, depthwise_kernel, pointwise_kernel,
-                           strides, padding)
+    x = tf.nn.separable_conv2d(x, depthwise_kernel, pointwise_kernel,
+                               strides, padding)
     return _postprocess_conv2d_output(x, dim_ordering)
 
 
@@ -1281,4 +1370,5 @@ def random_binomial(shape, p=0.0, dtype=_FLOATX, seed=None):
     if seed is None:
         seed = np.random.randint(10e6)
     return tf.select(tf.random_uniform(shape, dtype=dtype, seed=seed) <= p,
-                     tf.ones(shape), tf.zeros(shape))
+                     tf.ones(shape, dtype=dtype),
+                     tf.zeros(shape, dtype=dtype))

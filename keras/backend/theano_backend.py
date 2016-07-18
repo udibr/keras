@@ -122,24 +122,34 @@ def dot(x, y):
 
 
 def batch_dot(x, y, axes=None):
-    '''batchwise dot product
+    '''Batchwise dot product.
+
     batch_dot results in a tensor with less dimensions than the input.
     If the number of dimensions is reduced to 1, we use `expand_dims` to
     make sure that ndim is at least 2.
-
-    # Example
-        Assume x = [[1, 2], [3, 4]]   and y = [[5, 6], [7, 8]]
-        batch_dot(x, y, axes=1) = [[17, 53]] which is the main diagonal
-        of x.dot(y.T), although we never have to calculate the off-diagonal
-        elements.
-
 
     # Arguments
         x, y: tensors with ndim >= 2
         axes: list (or single) int with target dimensions
 
     # Returns
-        Tensor with ndim >= 2
+        A tensor with shape equal to the concatenation of x's shape (less the dimension that was summed over) and y's shape (less the batch dimension and the dimension that was summed over). If the final rank is 1, we reshape it to (batch_size, 1).
+
+    # Examples
+        Assume x = [[1, 2], [3, 4]]   and y = [[5, 6], [7, 8]]
+        batch_dot(x, y, axes=1) = [[17, 53]] which is the main diagonal
+        of x.dot(y.T), although we never have to calculate the off-diagonal
+        elements.
+       
+        Shape inference:
+        Let x's shape be (100, 20) and y's shape be (100, 30, 20). If dot_axes is (1, 2), to find the output shape of resultant tensor, loop through each dimension in x's shape and y's shape:
+        x.shape[0] : 100 : append to output shape
+        x.shape[1] : 20 : do not append to output shape, dimension 1 of x has been summed over. (dot_axes[0] = 1)
+        y.shape[0] : 100 : do not append to output shape, always ignore first dimension of y
+        y.shape[1] : 30 : append to output shape
+        y.shape[2] : 20 : do not append to output shape, dimension 2 of y has been summed over. (dot_axes[1] = 2)
+
+        output_shape = (100, 30)
     '''
     if type(axes) == int:
         axes = (axes, axes)
@@ -284,6 +294,39 @@ def sin(x):
 
 def cos(x):
     return T.cos(x)
+
+
+def normalize_batch_in_training(x, gamma, beta,
+                                reduction_axes, epsilon=0.0001):
+    '''Compute mean and std for batch then apply batch_normalization on batch.
+    '''
+    std = T.sqrt(x.var(reduction_axes) + epsilon)
+    mean = x.mean(reduction_axes)
+
+    target_shape = []
+    for axis in range(ndim(x)):
+        if axis in reduction_axes:
+            target_shape.append(1)
+        else:
+            target_shape.append(x.shape[axis])
+    target_shape = T.stack(*target_shape)
+
+    broadcast_mean = T.reshape(mean, target_shape)
+    broadcast_std = T.reshape(std, target_shape)
+    broadcast_beta = T.reshape(beta, target_shape)
+    broadcast_gamma = T.reshape(gamma, target_shape)
+    normed = batch_normalization(x, broadcast_mean, broadcast_std,
+                                 broadcast_beta, broadcast_gamma,
+                                 epsilon)
+    return normed, mean, std
+
+
+def batch_normalization(x, mean, std, beta, gamma, epsilon=0.0001):
+    '''Apply batch normalization on x given mean, std, beta and gamma.
+    '''
+    normed = T.nnet.bn.batch_normalization(x, gamma, beta, mean, std + epsilon,
+                                           mode='high_mem')
+    return normed
 
 
 # SHAPE OPERATIONS
@@ -544,6 +587,13 @@ def function(inputs, outputs, updates=[], **kwargs):
 
 def gradients(loss, variables):
     return T.grad(loss, variables)
+
+
+def stop_gradient(variables):
+    '''Returns `variables` but with zero gradient with respect to every other
+    variables.
+    '''
+    return theano.gradient.disconnected_grad(variables)
 
 
 # CONTROL FLOW
@@ -814,8 +864,8 @@ def l2_normalize(x, axis):
 # CONVOLUTIONS
 
 def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
-           dim_ordering=_IMAGE_DIM_ORDERING,
-           image_shape=None, filter_shape=None):
+           dim_ordering=_IMAGE_DIM_ORDERING, image_shape=None,
+           filter_shape=None, filter_dilation=(1, 1)):
     '''2D convolution.
 
     # Arguments
@@ -866,11 +916,20 @@ def conv2d(x, kernel, strides=(1, 1), border_mode='valid',
     if filter_shape is not None:
         filter_shape = tuple(int_or_none(v) for v in filter_shape)
 
-    conv_out = T.nnet.conv2d(x, kernel,
-                             border_mode=th_border_mode,
-                             subsample=strides,
-                             input_shape=image_shape,
-                             filter_shape=filter_shape)
+    # TODO: remove the if statement when theano with no filter dilation is deprecated.
+    if filter_dilation == (1, 1):
+        conv_out = T.nnet.conv2d(x, kernel,
+                                 border_mode=th_border_mode,
+                                 subsample=strides,
+                                 input_shape=image_shape,
+                                 filter_shape=filter_shape)
+    else:
+        conv_out = T.nnet.conv2d(x, kernel,
+                                 border_mode=th_border_mode,
+                                 subsample=strides,
+                                 input_shape=image_shape,
+                                 filter_shape=filter_shape,
+                                 filter_dilation=filter_dilation)
 
     if border_mode == 'same':
         if np_kernel.shape[2] % 2 == 0:
