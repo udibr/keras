@@ -38,6 +38,7 @@ def check_two_tensor_operation(function_name, x_input_shape,
     assert zth.shape == ztf.shape
     assert_allclose(zth, ztf, atol=1e-05)
 
+
 def check_composed_tensor_operations(first_function_name, first_function_args,
                                      second_function_name, second_function_args,
                                      input_shape):
@@ -58,6 +59,7 @@ def check_composed_tensor_operations(first_function_name, first_function_args,
 
     assert zth.shape == ztf.shape
     assert_allclose(zth, ztf, atol=1e-05)
+
 
 class TestBackend(object):
 
@@ -196,6 +198,11 @@ class TestBackend(object):
 
         # two-tensor ops
         check_two_tensor_operation('equal', (4, 2), (4, 2))
+        check_two_tensor_operation('not_equal', (4, 2), (4, 2))
+        check_two_tensor_operation('greater', (4, 2), (4, 2))
+        check_two_tensor_operation('greater_equal', (4, 2), (4, 2))
+        check_two_tensor_operation('lesser', (4, 2), (4, 2))
+        check_two_tensor_operation('lesser_equal', (4, 2), (4, 2))
         check_two_tensor_operation('maximum', (4, 2), (4, 2))
         check_two_tensor_operation('minimum', (4, 2), (4, 2))
 
