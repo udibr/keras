@@ -323,6 +323,30 @@ class Layer(object):
             if 'create_input_layer' in kwargs:
                 self.create_input_layer(batch_input_shape, input_dtype)
 
+    @property
+    def trainable_weights(self):
+        trainable = getattr(self, 'trainable', True)
+        if trainable:
+            return self._trainable_weights
+        else:
+            return []
+
+    @trainable_weights.setter
+    def trainable_weights(self, weights):
+        self._trainable_weights = weights
+
+    @property
+    def non_trainable_weights(self):
+        trainable = getattr(self, 'trainable', True)
+        if not trainable:
+            return self._trainable_weights + self._non_trainable_weights
+        else:
+            return self._non_trainable_weights
+
+    @non_trainable_weights.setter
+    def non_trainable_weights(self, weights):
+        self._non_trainable_weights = weights
+
     def create_input_layer(self, batch_input_shape,
                            input_dtype=None, name=None):
         if not name:
@@ -696,15 +720,15 @@ class Layer(object):
                           ' outbound layers. '
                           'This will cause part of your model '
                           'to be disconnected.')
-        if not shape:
-            if hasattr(K, 'int_shape'):
-                shape = K.int_shape(input_tensor)
-            else:
-                raise Exception('`set_input` needs to know the shape '
-                                'of the `input_tensor` it receives, but '
-                                'Keras was not able to infer it automatically.'
-                                ' Specify it via: '
-                                '`model.set_input(input_tensor, shape)`')
+        if hasattr(K, 'int_shape'):
+            # auto-infered shape takes priority
+            shape = K.int_shape(input_tensor)
+        elif not shape:
+            raise Exception('`set_input` needs to know the shape '
+                            'of the `input_tensor` it receives, but '
+                            'Keras was not able to infer it automatically.'
+                            ' Specify it via: '
+                            '`model.set_input(input_tensor, shape)`')
         # reset layer connections
         self.inbound_nodes = []
         self.outbound_nodes = []
@@ -830,6 +854,10 @@ class Layer(object):
                             'ill-defined for the layer. ' +
                             'Use `get_output_shape_at(node_index)` instead.')
 
+    @property
+    def weights(self):
+        return self.trainable_weights + self.non_trainable_weights
+
     def set_weights(self, weights):
         '''Sets the weights of the layer, from Numpy arrays.
 
@@ -840,12 +868,12 @@ class Layer(object):
                 of the layer (i.e. it should match the
                 output of `get_weights`).
         '''
-        params = self.trainable_weights + self.non_trainable_weights
+        params = self.weights
         if len(params) != len(weights):
             raise Exception('You called `set_weights(weights)` on layer "' + self.name +
                             '" with a  weight list of length ' + str(len(weights)) +
                             ', but the layer was expecting ' + str(len(params)) +
-                            ' weights. Provided weights: ' + str(weights))
+                            ' weights. Provided weights: ' + str(weights)[:50] + '...')
         if not params:
             return
         weight_value_tuples = []
@@ -863,7 +891,7 @@ class Layer(object):
         '''Returns the current weights of the layer,
         as a list of numpy arrays.
         '''
-        params = self.trainable_weights + self.non_trainable_weights
+        params = self.weights
         return K.batch_get_value(params)
 
     def get_config(self):
@@ -922,6 +950,8 @@ class InputLayer(Layer):
         self.uses_learning_phase = False
         self.trainable = False
         self.built = True
+        self.trainable_weights = []
+        self.non_trainable_weights = []
 
         self.inbound_nodes = []
         self.outbound_nodes = []
@@ -2387,7 +2417,7 @@ class Container(Layer):
 
         for layer in flattened_layers:
             g = f.create_group(layer.name)
-            symbolic_weights = layer.trainable_weights + layer.non_trainable_weights
+            symbolic_weights = layer.weights
             weight_values = K.batch_get_value(symbolic_weights)
             weight_names = []
             for i, (w, val) in enumerate(zip(symbolic_weights, weight_values)):
@@ -2411,8 +2441,11 @@ class Container(Layer):
         '''
         import h5py
         f = h5py.File(filepath, mode='r')
+        if 'layer_names' not in f.attrs and 'model_weights' in f:
+            f = f['model_weights']
         self.load_weights_from_hdf5_group(f)
-        f.close()
+        if hasattr(f, 'close'):
+            f.close()
 
     def load_weights_from_hdf5_group(self, f):
         '''Weight loading is based on layer order in a list
@@ -2426,12 +2459,6 @@ class Container(Layer):
             flattened_layers = self.flattened_layers
         else:
             flattened_layers = self.layers
-        filtered_layers = []
-        for layer in flattened_layers:
-            weights = layer.trainable_weights + layer.non_trainable_weights
-            if weights:
-                filtered_layers.append(layer)
-        flattened_layers = filtered_layers
 
         if 'nb_layers' in f.attrs:
             # legacy format
@@ -2440,7 +2467,7 @@ class Container(Layer):
                 raise Exception('You are trying to load a weight file '
                                 'containing ' + str(nb_layers) +
                                 ' layers into a model with ' +
-                                str(len(flattened_layers)) + '.')
+                                str(len(flattened_layers)) + ' layers.')
 
             for k in range(nb_layers):
                 g = f['layer_{}'.format(k)]
@@ -2448,6 +2475,13 @@ class Container(Layer):
                 flattened_layers[k].set_weights(weights)
         else:
             # new file format
+            filtered_layers = []
+            for layer in flattened_layers:
+                weights = layer.weights
+                if weights:
+                    filtered_layers.append(layer)
+            flattened_layers = filtered_layers
+
             layer_names = [n.decode('utf8') for n in f.attrs['layer_names']]
             filtered_layer_names = []
             for name in layer_names:
@@ -2470,7 +2504,7 @@ class Container(Layer):
                 weight_names = [n.decode('utf8') for n in g.attrs['weight_names']]
                 weight_values = [g[weight_name] for weight_name in weight_names]
                 layer = flattened_layers[k]
-                symbolic_weights = layer.trainable_weights + layer.non_trainable_weights
+                symbolic_weights = layer.weights
                 if len(weight_values) != len(symbolic_weights):
                     raise Exception('Layer #' + str(k) +
                                     ' (named "' + layer.name +
