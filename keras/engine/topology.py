@@ -1116,7 +1116,7 @@ class Merge(Layer):
             If lambda/function, it should take as input a list of tensors
             and return a single tensor.
         concat_axis: integer, axis to use in mode `concat`.
-        dot_axes: integer or tuple of integers, axes to use in mode `dot`.
+        dot_axes: integer or tuple of integers, axes to use in mode `dot` or `cos`.
         output_shape: either a shape tuple (tuple of integers), or a lambda/function
             to compute `output_shape` (only if merge mode is a lambda/function).
             If the argument is a tuple,
@@ -1492,7 +1492,7 @@ def merge(inputs, mode='sum', concat_axis=-1,
             If lambda/function, it should take as input a list of tensors
             and return a single tensor.
         concat_axis: integer, axis to use in mode `concat`.
-        dot_axes: integer or tuple of integers, axes to use in mode `dot`.
+        dot_axes: integer or tuple of integers, axes to use in mode `dot` or `cos`.
         output_shape: shape tuple (tuple of integers), or lambda/function
             to compute output_shape (only if merge mode is a lambda/function).
             If the latter case, it should take as input a list of shape tuples
@@ -1713,6 +1713,7 @@ class Container(Layer):
         container_nodes = set()  # ids of all nodes relevant to the Container
         nodes_depths = {}  # map {node: depth value}
         layers_depths = {}  # map {layer: depth value}
+        layer_indices = {}  # map {layer: index in traversal}
 
         def make_node_marker(node, depth):
             return str(id(node)) + '-' + str(depth)
@@ -1756,6 +1757,8 @@ class Container(Layer):
             else:
                 current_depth = max(depth, previously_seen_depth)
             layers_depths[layer] = current_depth
+            if layer not in layer_indices:
+                layer_indices[layer] = len(layer_indices)
 
             # propagate to all previous tensors connected to this node
             for i in range(len(node.inbound_layers)):
@@ -1796,8 +1799,12 @@ class Container(Layer):
         layers = []
         for depth in depth_keys:
             layers_for_depth = layers_by_depth[depth]
-            # container.layers needs to have a deterministic order
-            layers_for_depth.sort(key=lambda x: x.name)
+            # container.layers needs to have a deterministic order:
+            # here we order them by traversal order
+            if K.legacy_weight_ordering():
+                layers_for_depth.sort(key=lambda x: x.name)
+            else:
+                layers_for_depth.sort(key=lambda x: layer_indices[x])
             for layer in layers_for_depth:
                 layers.append(layer)
         self.layers = layers
@@ -1964,6 +1971,30 @@ class Container(Layer):
         for layer in self.layers:
             weights += layer.non_trainable_weights
         return weights
+
+    def get_weights(self):
+        '''Returns the weights of the model,
+        as a flat list of Numpy arrays.
+        '''
+        weights = []
+        for layer in self.layers:
+            weights += layer.weights
+        return K.batch_get_value(weights)
+
+    def set_weights(self, weights):
+        '''Sets the weights of the model.
+        The `weights` argument should be a list
+        of Numpy arrays with shapes and types matching
+        the output of `model.get_weights()`.
+        '''
+        tuples = []
+        for layer in self.layers:
+            nb_param = len(layer.weights)
+            layer_weights = weights[:nb_param]
+            for sw, w in zip(layer.weights, layer_weights):
+                tuples.append((sw, w))
+            weights = weights[nb_param:]
+        K.batch_set_value(tuples)
 
     @property
     def input_spec(self):

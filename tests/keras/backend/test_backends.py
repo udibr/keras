@@ -92,14 +92,15 @@ class TestBackend(object):
         check_single_tensor_operation('expand_dims', (4, 3), dim=-1)
         check_single_tensor_operation('expand_dims', (4, 3, 2), dim=1)
         check_single_tensor_operation('squeeze', (4, 3, 1), axis=2)
-        check_composed_tensor_operations('reshape', {'shape':(4,3,1,1)},
-                                         'squeeze', {'axis':2},
+        check_single_tensor_operation('squeeze', (4, 1, 1), axis=1)
+        check_composed_tensor_operations('reshape', {'shape': (4, 3, 1, 1)},
+                                         'squeeze', {'axis': 2},
                                          (4, 3, 1, 1))
 
     def test_repeat_elements(self):
         reps = 3
         for ndims in [1, 2, 3]:
-            shape = np.arange(2, 2+ndims)
+            shape = np.arange(2, 2 + ndims)
             arr = np.arange(np.prod(shape)).reshape(shape)
             arr_th = KTH.variable(arr)
             arr_tf = KTF.variable(arr)
@@ -579,6 +580,16 @@ class TestBackend(object):
         assert(np.abs(np.mean(rand) - p) < 0.01)
         assert(np.max(rand) == 1)
         assert(np.min(rand) == 0)
+
+    def test_one_hot(self):
+        input_length = 10
+        nb_classes = 20
+        batch_size = 30
+        indices = np.random.randint(0, nb_classes, size=(batch_size, input_length))
+        oh = np.eye(nb_classes)[indices]
+        for K in [KTH, KTF]:
+            koh = K.eval(K.one_hot(K.variable(indices, dtype='int32'), nb_classes))
+            assert np.all(koh == oh)
 
 
 if __name__ == '__main__':
