@@ -76,6 +76,9 @@ class Recurrent(Layer):
         stateful: Boolean (default False). If True, the last state
             for each sample at index i in a batch will be used as initial
             state for the sample of index i in the following batch.
+        following: Recurrent object
+            As an alternative to setting stateful, you can start with a states
+            which are the final states of some other Recurrent object.
         unroll: Boolean (default False). If True, the network will be unrolled,
             else a symbolic loop will be used. When using TensorFlow, the network
             is always unrolled, so this argument does not do anything.
@@ -154,13 +157,15 @@ class Recurrent(Layer):
         following the notes on statefulness RNNs.
     '''
     def __init__(self, weights=None,
-                 return_sequences=False, go_backwards=False, stateful=False,
+                 return_sequences=False, go_backwards=False, stateful=False, following=None,
                  unroll=False, consume_less='cpu',
                  input_dim=None, input_length=None, **kwargs):
         self.return_sequences = return_sequences
         self.initial_weights = weights
         self.go_backwards = go_backwards
         self.stateful = stateful
+        self.following = following
+        assert not stateful or (following is None), "You can't be stateful and follow another RNN"
         self.unroll = unroll
         self.consume_less = consume_less
 
@@ -191,6 +196,8 @@ class Recurrent(Layer):
         return []
 
     def get_initial_states(self, x):
+        if self.following is not None:
+            return self.following.output_states
         # build an all-zero tensor of shape (samples, output_dim)
         initial_state = K.zeros_like(x)  # (samples, timesteps, input_dim)
         initial_state = K.sum(initial_state, axis=(1, 2))  # (samples,)
@@ -238,6 +245,8 @@ class Recurrent(Layer):
             self.updates = []
             for i in range(len(states)):
                 self.updates.append((self.states[i], states[i]))
+
+        self.output_states = states
 
         if self.return_sequences:
             return outputs

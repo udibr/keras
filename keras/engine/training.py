@@ -1482,7 +1482,9 @@ class Model(Container):
                         val_outs = self.evaluate_generator(validation_data,
                                                            nb_val_samples,
                                                            max_q_size=max_q_size,
-                                                           val_callbacks=val_callbacks)
+                                                           val_callbacks=val_callbacks,
+                                                           nb_worker=nb_worker,
+                                                           pickle_safe=pickle_safe)
                     else:
                         # no need for try/except because
                         # data has already been validated
@@ -1546,6 +1548,8 @@ class Model(Container):
 
         if val_callbacks:
             val_callbacks.on_train_begin()
+            val_callbacks.on_epoch_begin(0)
+            batch_index = 0
         while processed_samples < val_samples:
             generator_output = None
             while not _stop.is_set():
@@ -1571,14 +1575,15 @@ class Model(Container):
                                 '(x, y, sample_weight) '
                                 'or (x, y). Found: ' + str(generator_output))
             if val_callbacks:
-                val_callbacks.on_batch_begin()
+                val_callbacks.on_batch_begin(batch_index)
             try:
                 outs = self.test_on_batch(x, y, sample_weight=sample_weight)
             except:
                 _stop.set()
                 raise
             if val_callbacks:
-                val_callbacks.on_batch_end()
+                val_callbacks.on_batch_end(batch_index)
+                batch_index += 1
 
             if type(x) is list:
                 nb_samples = len(x[0])
