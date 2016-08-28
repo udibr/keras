@@ -764,13 +764,13 @@ def repeat(x, n):
     the output will have shape (samples, 2, dim)
     '''
     assert ndim(x) == 2
-    tensors = [x] * n
-    stacked = tf.pack(tensors)
-    return tf.transpose(stacked, (1, 0, 2))
+    x = tf.expand_dims(x, 1)
+    pattern = tf.pack([1, n, 1])
+    return tf.tile(x, pattern)
 
 
 def tile(x, n):
-    if not hasattr(n, 'shape') and not hasattr(n, '__len__'):
+    if not hasattr(n, 'shape') and not hasattr(n, '__len__') and not hasattr(n, '_shape'):
         n = [n]
     return tf.tile(x, n)
 
@@ -783,7 +783,7 @@ def batch_flatten(x):
     '''Turn a n-D tensor into a 2D tensor where
     the first dimension is conserved.
     '''
-    x = tf.reshape(x, [-1, prod(shape(x)[1:])])
+    x = tf.reshape(x, tf.pack([-1, prod(shape(x)[1:])]))
     return x
 
 
@@ -870,6 +870,15 @@ def one_hot(indices, nb_classes):
     return tf.one_hot(indices, depth=nb_classes, axis=-1)
 
 
+def reverse(x, axes):
+    '''Reverse a tensor along the the specified axes
+    '''
+    if type(axes) == int:
+        axes = [axes]
+    dims = [True if i in axes else False for i in range(len(x.get_shape()._dims))]
+    return tf.reverse(x, dims)
+
+
 # VALUE MANIPULATION
 
 
@@ -931,6 +940,10 @@ def batch_set_value(tuples):
             assign_ops.append(assign_op)
             feed_dict[assign_placeholder] = value
         get_session().run(assign_ops, feed_dict=feed_dict)
+
+
+def get_variable_shape(x):
+    return int_shape(x)
 
 
 def print_tensor(x, message=''):
@@ -1018,10 +1031,11 @@ def rnn(step_function, inputs, initial_states,
                     time step.
                 states: list of tensors.
             Returns:
-                output: tensor with shape (samples, ...) (no time dimension),
+                output: tensor with shape (samples, output_dim) (no time dimension),
                 new_states: list of tensors, same length and shapes
-                    as 'states'.
-        initial_states: tensor with shape (samples, ...) (no time dimension),
+                    as 'states'. The first state in the list must be the
+                    output tensor at the previous timestep.
+        initial_states: tensor with shape (samples, output_dim) (no time dimension),
             containing the initial values for the states used in
             the step function.
         go_backwards: boolean. If True, do the iteration over
@@ -1045,66 +1059,164 @@ def rnn(step_function, inputs, initial_states,
             the step function, of shape (samples, ...).
     '''
     ndim = len(inputs.get_shape())
-    assert ndim >= 3, "Input should be at least 3D."
+    assert ndim >= 3, 'Input should be at least 3D.'
     axes = [1, 0] + list(range(2, ndim))
     inputs = tf.transpose(inputs, (axes))
-    input_list = tf.unpack(inputs)
+
     if constants is None:
         constants = []
 
-    states = initial_states
-    successive_states = []
-    successive_outputs = []
-    if go_backwards:
-        input_list.reverse()
+    if unroll:
+        if not inputs.get_shape()[0]:
+            raise Exception('Unrolling requires a fixed number of timesteps.')
 
-    if mask is not None:
-        # Transpose not supported by bool tensor types, hence round-trip to uint8.
-        mask = tf.cast(mask, tf.uint8)
-        if len(mask.get_shape()) == ndim-1:
-            mask = expand_dims(mask)
-        mask = tf.cast(tf.transpose(mask, axes), tf.bool)
-        mask_list = tf.unpack(mask)
+        states = initial_states
+        successive_states = []
+        successive_outputs = []
+
+        input_list = tf.unpack(inputs)
+        if go_backwards:
+            input_list.reverse()
+
+        if mask is not None:
+            # Transpose not supported by bool tensor types, hence round-trip to uint8.
+            mask = tf.cast(mask, tf.uint8)
+            if len(mask.get_shape()) == ndim - 1:
+                mask = expand_dims(mask)
+            mask = tf.cast(tf.transpose(mask, axes), tf.bool)
+            mask_list = tf.unpack(mask)
+
+            if go_backwards:
+                mask_list.reverse()
+
+            for input, mask_t in zip(input_list, mask_list):
+                output, new_states = step_function(input, states + constants)
+
+                # tf.select needs its condition tensor to be the same shape as its two
+                # result tensors, but in our case the condition (mask) tensor is
+                # (nsamples, 1), and A and B are (nsamples, ndimensions). So we need to
+                # broadcast the mask to match the shape of A and B. That's what the
+                # tile call does, is just repeat the mask along its second dimension
+                # ndimensions times.
+                tiled_mask_t = tf.tile(mask_t, tf.pack([1, tf.shape(output)[1]]))
+
+                if len(successive_outputs) == 0:
+                    prev_output = zeros_like(output)
+                else:
+                    prev_output = successive_outputs[-1]
+
+                output = tf.select(tiled_mask_t, output, prev_output)
+
+                return_states = []
+                for state, new_state in zip(states, new_states):
+                    # (see earlier comment for tile explanation)
+                    tiled_mask_t = tf.tile(mask_t, tf.pack([1, tf.shape(new_state)[1]]))
+                    return_states.append(tf.select(tiled_mask_t, new_state, state))
+
+                states = return_states
+                successive_outputs.append(output)
+                successive_states.append(states)
+                last_output = successive_outputs[-1]
+                new_states = successive_states[-1]
+                outputs = tf.pack(successive_outputs)
+        else:
+            for input in input_list:
+                output, states = step_function(input, states + constants)
+                successive_outputs.append(output)
+                successive_states.append(states)
+            last_output = successive_outputs[-1]
+            new_states = successive_states[-1]
+            outputs = tf.pack(successive_outputs)
+
+    else:
+        from tensorflow.python.ops.rnn import _dynamic_rnn_loop
 
         if go_backwards:
-            mask_list.reverse()
+            inputs = tf.reverse(inputs, [True] + [False] * (ndim - 1))
 
-        for input, mask_t in zip(input_list, mask_list):
-            output, new_states = step_function(input, states + constants)
+        states = initial_states
+        nb_states = len(states)
+        if nb_states == 0:
+            raise Exception('No initial states provided.')
+        elif nb_states == 1:
+            state = states[0]
+        else:
+            state = tf.concat(1, states)
 
-            # tf.select needs its condition tensor to be the same shape as its two
-            # result tensors, but in our case the condition (mask) tensor is
-            # (nsamples, 1), and A and B are (nsamples, ndimensions). So we need to
-            # broadcast the mask to match the shape of A and B. That's what the
-            # tile call does, is just repeat the mask along its second dimension
-            # ndimensions times.
-            tiled_mask_t = tf.tile(mask_t, tf.pack([1, tf.shape(output)[1]]))
+        state_size = int(states[0].get_shape()[-1])
 
-            if len(successive_outputs) == 0:
-                prev_output = zeros_like(output)
-            else:
-                prev_output = successive_outputs[-1]
+        if mask is not None:
+            if go_backwards:
+                mask = tf.reverse(mask, [True] + [False] * (ndim - 1))
 
-            output = tf.select(tiled_mask_t, output, prev_output)
+            # Transpose not supported by bool tensor types, hence round-trip to uint8.
+            mask = tf.cast(mask, tf.uint8)
+            if len(mask.get_shape()) == ndim - 1:
+                mask = expand_dims(mask)
+            mask = tf.transpose(mask, axes)
+            inputs = tf.concat(2, [tf.cast(mask, inputs.dtype), inputs])
 
-            return_states = []
-            for state, new_state in zip(states, new_states):
-                # (see earlier comment for tile explanation)
-                tiled_mask_t = tf.tile(mask_t, tf.pack([1, tf.shape(new_state)[1]]))
-                return_states.append(tf.select(tiled_mask_t, new_state, state))
+            def _step(input, state):
+                if nb_states > 1:
+                    states = []
+                    for i in range(nb_states):
+                        states.append(state[:, i * state_size: (i + 1) * state_size])
+                else:
+                    states = [state]
+                mask_t = tf.cast(input[:, 0], tf.bool)
+                input = input[:, 1:]
+                output, new_states = step_function(input, states + constants)
 
-            states = return_states
-            successive_outputs.append(output)
-            successive_states.append(states)
-    else:
-        for input in input_list:
-            output, states = step_function(input, states + constants)
-            successive_outputs.append(output)
-            successive_states.append(states)
+                output = tf.select(mask_t, output, states[0])
+                new_states = [tf.select(mask_t, new_states[i], states[i]) for i in range(len(states))]
 
-    last_output = successive_outputs[-1]
-    outputs = tf.pack(successive_outputs)
-    new_states = successive_states[-1]
+                if len(new_states) == 1:
+                    new_state = new_states[0]
+                else:
+                    new_state = tf.concat(1, new_states)
+
+                return output, new_state
+        else:
+            def _step(input, state):
+                if nb_states > 1:
+                    states = []
+                    for i in range(nb_states):
+                        states.append(state[:, i * state_size: (i + 1) * state_size])
+                else:
+                    states = [state]
+                output, new_states = step_function(input, states + constants)
+
+                if len(new_states) == 1:
+                    new_state = new_states[0]
+                else:
+                    new_state = tf.concat(1, new_states)
+                return output, new_state
+
+        # state size is assumed to be the same as output size
+        # (always the case)
+        _step.state_size = state_size * nb_states
+        _step.output_size = state_size
+
+        (outputs, final_state) = _dynamic_rnn_loop(
+            _step,
+            inputs,
+            state,
+            parallel_iterations=32,
+            swap_memory=True,
+            sequence_length=None)
+
+        if nb_states > 1:
+            new_states = []
+            for i in range(nb_states):
+                new_states.append(final_state[:, i * state_size: (i + 1) * state_size])
+        else:
+            new_states = [final_state]
+
+        # all this circus is to recover the last vector in the sequence.
+        begin = tf.pack([tf.shape(outputs)[0] - 1] + [0] * (ndim - 1))
+        size = tf.pack([1] + [-1] * (ndim - 1))
+        last_output = tf.slice(outputs, begin, size)
+        last_output = tf.squeeze(last_output, [0])
 
     axes = [1, 0] + list(range(2, len(outputs.get_shape())))
     outputs = tf.transpose(outputs, axes)
@@ -1281,14 +1393,16 @@ def tanh(x):
     return tf.nn.tanh(x)
 
 
-def dropout(x, level, seed=None, shape=None):
+def dropout(x, level, noise_shape=None, seed=None):
     '''Sets entries in `x` to zero at random,
     while scaling the entire tensor.
 
     # Arguments
         x: tensor
         level: fraction of the entries in the tensor
-            that will be set to 0
+            that will be set to 0.
+        noise_shape: shape for randomly generated keep/drop flags,
+            must be broadcastable to the shape of `x`
         seed: random seed to ensure determinism.
     '''
     retain_prob = 1. - level
@@ -1296,7 +1410,7 @@ def dropout(x, level, seed=None, shape=None):
         seed = np.random.randint(10e6)
     # the dummy 1. works around a TF bug
     # (float32_ref vs. float32 incomptability)
-    return tf.nn.dropout(x * 1., retain_prob, seed=seed)
+    return tf.nn.dropout(x * 1., retain_prob, noise_shape, seed=seed)
 
 
 def l2_normalize(x, axis):
@@ -1595,3 +1709,113 @@ def random_binomial(shape, p=0.0, dtype=_FLOATX, seed=None):
     return tf.select(tf.random_uniform(shape, dtype=dtype, seed=seed) <= p,
                      tf.ones(shape, dtype=dtype),
                      tf.zeros(shape, dtype=dtype))
+
+# CTC
+# tensorflow has a native implemenation, but it uses sparse tensors
+# and therefore requires a wrapper for Keras. The functions below convert
+# dense to sparse tensors and also wraps up the beam search code that is
+# in tensorflow's CTC implementation
+
+def ctc_label_dense_to_sparse(labels, label_lengths):
+    # undocumented feature soon to be made public
+    from tensorflow.python.ops import functional_ops
+    label_shape = tf.shape(labels)
+    num_batches_tns = tf.pack([label_shape[0]])
+    max_num_labels_tns = tf.pack([label_shape[1]])
+
+    def range_less_than(previous_state, current_input):
+        return tf.expand_dims(tf.range(label_shape[1]), 0) < current_input
+
+    init = tf.cast(tf.fill(max_num_labels_tns, 0), tf.bool)
+    dense_mask = functional_ops.scan(range_less_than, label_lengths,
+                                     initializer=init, parallel_iterations=1)
+    dense_mask = dense_mask[:, 0, :]
+
+    label_array = tf.reshape(tf.tile(tf.range(0, label_shape[1]), num_batches_tns),
+                             label_shape)
+    label_ind = tf.boolean_mask(label_array, dense_mask)
+
+    batch_array = tf.transpose(tf.reshape(tf.tile(tf.range(0, label_shape[0]),
+                                                  max_num_labels_tns), tf.reverse(label_shape, [True])))
+    batch_ind = tf.boolean_mask(batch_array, dense_mask)
+    indices = tf.transpose(tf.reshape(tf.concat(0, [batch_ind, label_ind]), [2, -1]))
+
+    vals_sparse = tf.gather_nd(labels, indices)
+
+    return tf.SparseTensor(tf.to_int64(indices), vals_sparse, tf.to_int64(label_shape))
+
+
+def ctc_batch_cost(y_true, y_pred, input_length, label_length):
+
+    '''Runs CTC loss algorithm on each batch element.
+
+    # Arguments
+        y_true: tensor (samples, max_string_length) containing the truth labels
+        y_pred: tensor (samples, time_steps, num_categories) containing the prediction,
+                or output of the softmax
+        input_length: tensor (samples,1) containing the sequence length for
+                each batch item in y_pred
+        label_length: tensor (samples,1) containing the sequence length for
+                each batch item in y_true
+
+    # Returns
+        Tensor with shape (samples,1) containing the
+            CTC loss of each element
+    '''
+    label_length = tf.to_int32(tf.squeeze(label_length))
+    input_length = tf.to_int32(tf.squeeze(input_length))
+    sparse_labels = tf.to_int32(ctc_label_dense_to_sparse(y_true, label_length))
+
+    y_pred = tf.log(tf.transpose(y_pred, perm=[1, 0, 2]) + 1e-8)
+
+    return tf.expand_dims(tf.contrib.ctc.ctc_loss(inputs=y_pred,
+                                                  labels=sparse_labels,
+                                                  sequence_length=input_length), 1)
+
+
+def ctc_decode(y_pred, input_length, greedy=True, beam_width=None,
+               dict_seq_lens=None, dict_values=None):
+    '''Decodes the output of a softmax using either
+       greedy (also known as best path) or a constrained dictionary
+       search.
+
+    # Arguments
+        y_pred: tensor (samples, time_steps, num_categories) containing the prediction,
+                or output of the softmax
+        input_length: tensor (samples,1) containing the sequence length for
+                each batch item in y_pred
+        greedy:  perform much faster best-path search if true.  This does
+                not use a dictionary
+        beam_width:  if greedy is false and this value is not none, then
+                the constrained dictionary search uses a beam of this width
+        dict_seq_lens: the length of each element in the dict_values list
+        dict_values:  list of lists representing the dictionary.
+
+    # Returns
+        Tensor with shape (samples,time_steps,num_categories) containing the
+            path probabilities (in softmax output format).  Note that a function that
+            pulls out the argmax and collapses blank labels is still needed.
+    '''
+    y_pred = tf.log(tf.transpose(y_pred, perm=[1, 0, 2]) + 1e-8)
+    input_length = tf.to_int32(tf.squeeze(input_length))
+
+    if greedy:
+        (decoded, log_prob) = tf.contrib.ctc.ctc_greedy_decoder(
+            inputs=y_pred,
+            sequence_length=input_length)
+    else:
+        if beam_width is not None:
+            (decoded, log_prob) = tf.contrib.ctc.ctc_beam_search_decoder(
+                inputs=y_pred,
+                sequence_length=input_length,
+                dict_seq_lens=dict_seq_lens, dict_values=dict_values)
+        else:
+            (decoded, log_prob) = tf.contrib.ctc.ctc_beam_search_decoder(
+                inputs=y_pred,
+                sequence_length=input_length, beam_width=beam_width,
+                dict_seq_lens=dict_seq_lens, dict_values=dict_values)
+
+    decoded_dense = [tf.sparse_to_dense(st.indices, st.shape, st.values, default_value=-1)
+                     for st in decoded]
+
+    return (decoded_dense, log_prob)
