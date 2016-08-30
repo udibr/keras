@@ -84,14 +84,19 @@ block4_pool_features = model.predict(x)
 from keras.applications.inception_v3 import InceptionV3
 from keras.preprocessing import image
 from keras.models import Model
-from keras.layers import Dense
+from keras.layers import Dense, GlobalAveragePooling2D
+from keras import backend as K
 
 # create the base pre-trained model
 base_model = InceptionV3(weights='imagenet', include_top=False)
-# add some Dense layers on top
+
+# add a global spatial average pooling layer
 x = base_model.output
+x = GlobalAveragePooling2D()(x)
+# let's add a fully-connected layer
 x = Dense(1024, activation='relu')(x)
-predictions = Dense(200, activation='softmax')(x)  # let's say we have 200 classes
+# and a logistic layer -- let's say we have 200 classes
+predictions = Dense(200, activation='softmax')(x)
 
 # this is the model we will train
 model = Model(input=base_model.input, output=predictions)

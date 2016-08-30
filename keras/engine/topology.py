@@ -1388,7 +1388,7 @@ class Merge(Layer):
             masks = [K.expand_dims(m, 0) for m in mask if m is not None]
             return K.all(K.concatenate(masks, axis=0), axis=0, keepdims=False)
         elif self.mode == 'concat':
-            # Make a list of masks while making sure the dimensionality of each mask 
+            # Make a list of masks while making sure the dimensionality of each mask
             # is the same as the corresponding input.
             masks = []
             for input_i, mask_i in zip(inputs, mask):
@@ -1950,7 +1950,7 @@ class Container(Layer):
         cons = {}
         for layer in self.layers:
             for key, value in layer.constraints.items():
-                if key in cons:
+                if key in cons and cons[key] != value:
                     raise Exception('Received multiple constraints '
                                     'for one weight tensor: ' + str(key))
                 cons[key] = value
