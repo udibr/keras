@@ -189,7 +189,10 @@ class Recurrent(Layer):
 
     def get_initial_states(self, x):
         if self.following is not None:
-            return self.following.output_states
+            if isinstance(self.following, Recurrent):
+                return self.following.output_states
+            else:
+                return self.following
         # build an all-zero tensor of shape (samples, output_dim)
         initial_state = K.zeros_like(x)  # (samples, timesteps, input_dim)
         initial_state = K.sum(initial_state, axis=(1, 2))  # (samples,)
@@ -1284,6 +1287,8 @@ class LSTMBN(Recurrent):
                 self.add_bn_to_states(self.states, self.running_mean, self.running_std)
 
     def get_initial_states(self, x):
+        # TODO handle following
+        assert self.following is None
         if not self.batch_norm:
             return super(LSTM,self).get_initial_states(x)
 
