@@ -76,7 +76,7 @@ class Recurrent(Layer):
         stateful: Boolean (default False). If True, the last state
             for each sample at index i in a batch will be used as initial
             state for the sample of index i in the following batch.
-        following: Recurrent object
+        following: Recurrent object, list of tensor states
             As an alternative to setting stateful, you can start with a states
             which are the final states of some other Recurrent object.
         unroll: Boolean (default False). If True, the network will be unrolled,
