@@ -241,13 +241,14 @@ class Recurrent(Layer):
                   'stateful': self.stateful,
                   'unroll': self.unroll,
                   'consume_less': self.consume_less}
+        base_config = super(Recurrent, self).get_config()
         if self.stateful:
-            config['batch_input_shape'] = self.input_spec[0].shape
+            if 'batch_input_shape' not in base_config:
+                config['batch_input_shape'] = self.input_spec[0].shape
         else:
             config['input_dim'] = self.input_dim
             config['input_length'] = self.input_length
 
-        base_config = super(Recurrent, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
 
