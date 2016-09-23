@@ -1,9 +1,9 @@
 import tensorflow as tf
 from tensorflow.python.training import moving_averages
 try:
-    import tensorflow.contrib.ctc as ctc
-except ImportError:
     from tensorflow.python.ops import ctc_ops as ctc
+except ImportError:
+    import tensorflow.contrib.ctc as ctc
 import numpy as np
 import os
 import copy
@@ -1358,6 +1358,19 @@ def relu(x, alpha=0., max_value=None):
         x -= alpha * negative_part
     return x
 
+
+def elu(x, alpha=1.):
+    """ Exponential linear unit
+
+    # Arguments
+        x: Tensor to compute the activation function for.
+        alpha: scalar
+    """
+    res = tf.nn.elu(x)
+    if alpha == 1:
+        return res
+    else:
+        return tf.select(x > 0, res, alpha*res)
 
 def softmax(x):
     '''Softmax of a tensor.
