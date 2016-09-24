@@ -1356,7 +1356,8 @@ class Model(Container):
         # avoid any explicit version checks
         val_gen = (hasattr(validation_data, 'next') or
                    hasattr(validation_data, '__next__') or
-                   hasattr(validation_data, '__iter__')
+                   (hasattr(validation_data, '__iter__') and
+                    not any(isinstance(validation_data,t) for t in [list,tuple,np.ndarray]))
                    )
         if val_gen and not nb_val_samples:
             raise Exception('When using a generator for validation data, '
