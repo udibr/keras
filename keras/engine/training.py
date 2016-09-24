@@ -418,15 +418,22 @@ def generator_queue(generator, max_q_size=10,
 
     try:
         def data_generator_task():
+            try:
+                g = iter(generator)
+            except:
+                g = generator
             while not _stop.is_set():
                 try:
                     if pickle_safe or q.qsize() < max_q_size:
-                        generator_output = next(generator)
+                        generator_output = next(g)
+                        if generator_output is None:
+                            print("GEN NONE")
                         q.put(generator_output)
                     else:
                         time.sleep(wait_time)
                 except Exception:
                     _stop.set()
+                    print("CRASH1")
                     raise
 
         for i in range(nb_worker):
@@ -447,6 +454,7 @@ def generator_queue(generator, max_q_size=10,
                 if p.is_alive():
                     p.terminate()
             q.close()
+        print("CRASH2")
         raise
 
     return q, _stop
@@ -1347,7 +1355,9 @@ class Model(Container):
         # python 2 has 'next', 3 has '__next__'
         # avoid any explicit version checks
         val_gen = (hasattr(validation_data, 'next') or
-                   hasattr(validation_data, '__next__'))
+                   hasattr(validation_data, '__next__') or
+                   hasattr(validation_data, '__iter__')
+                   )
         if val_gen and not nb_val_samples:
             raise Exception('When using a generator for validation data, '
                             'you must specify a value for "nb_val_samples".')
