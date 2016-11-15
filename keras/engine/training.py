@@ -1557,6 +1557,10 @@ class Model(Container):
                                                 pickle_safe=pickle_safe)
 
         if val_callbacks:
+            if isinstance(val_callbacks,list):
+                val_callbacks = cbks.CallbackList(val_callbacks)
+                val_callbacks._set_model(self)
+
             val_callbacks.on_train_begin()
             val_callbacks.on_epoch_begin(0)
             batch_index = 0
