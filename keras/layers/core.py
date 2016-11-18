@@ -661,7 +661,8 @@ class Dense(Layer):
     # Output shape
         2D tensor with shape: `(nb_samples, output_dim)`.
     '''
-    def __init__(self, output_dim, init='glorot_uniform', activation='linear', weights=None,
+    def __init__(self, output_dim, init='glorot_uniform',
+                 activation=None, weights=None,
                  W_regularizer=None, b_regularizer=None, activity_regularizer=None,
                  W_constraint=None, b_constraint=None,
                  bias=True, input_dim=None, **kwargs):
@@ -722,6 +723,7 @@ class Dense(Layer):
         if self.initial_weights is not None:
             self.set_weights(self.initial_weights)
             del self.initial_weights
+        self.built = True
 
     def call(self, x, mask=None):
         output = K.dot(x, self.W)
@@ -890,6 +892,7 @@ class MaxoutDense(Layer):
         if self.initial_weights is not None:
             self.set_weights(self.initial_weights)
             del self.initial_weights
+        self.built = True
 
     def get_output_shape_for(self, input_shape):
         assert input_shape and len(input_shape) == 2
@@ -962,7 +965,7 @@ class Highway(Layer):
         - [Highway Networks](http://arxiv.org/pdf/1505.00387v2.pdf)
     '''
     def __init__(self, init='glorot_uniform', transform_bias=-2,
-                 activation='linear', weights=None,
+                 activation=None, weights=None,
                  W_regularizer=None, b_regularizer=None, activity_regularizer=None,
                  W_constraint=None, b_constraint=None,
                  bias=True, input_dim=None, **kwargs):
@@ -1027,6 +1030,7 @@ class Highway(Layer):
         if self.initial_weights is not None:
             self.set_weights(self.initial_weights)
             del self.initial_weights
+        self.built = True
 
     def call(self, x, mask=None):
         y = K.dot(x, self.W_carry)
@@ -1105,7 +1109,7 @@ class TimeDistributedDense(Layer):
     '''
 
     def __init__(self, output_dim,
-                 init='glorot_uniform', activation='linear', weights=None,
+                 init='glorot_uniform', activation=None, weights=None,
                  W_regularizer=None, b_regularizer=None, activity_regularizer=None,
                  W_constraint=None, b_constraint=None,
                  bias=True, input_dim=None, input_length=None, **kwargs):
@@ -1167,6 +1171,7 @@ class TimeDistributedDense(Layer):
         if self.initial_weights is not None:
             self.set_weights(self.initial_weights)
             del self.initial_weights
+        self.built = True
 
     def get_output_shape_for(self, input_shape):
         return (input_shape[0], input_shape[1], self.output_dim)
