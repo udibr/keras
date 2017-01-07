@@ -108,7 +108,7 @@ def kullback_leibler_divergence(y_true, y_pred):
     '''
     y_true = K.clip(y_true, K.epsilon(), 1)
     y_pred = K.clip(y_pred, K.epsilon(), 1)
-    return K.sum(y_true * K.log(y_true / y_pred), axis=-1)
+    return K.mean(K.sum(y_true * K.log(y_true / y_pred), axis=-1))
 
 
 def poisson(y_true, y_pred):
@@ -168,7 +168,7 @@ def recall(y_true, y_pred):
     return recall
 
 
-def fbeta_score(y_true, y_pred, beta):
+def fbeta_score(y_true, y_pred, beta=1):
     '''Calculates the F score, the weighted harmonic mean of precision and recall.
 
     This is useful for multi-label classification, where input samples can be
