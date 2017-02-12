@@ -9,7 +9,7 @@ from keras.layers import convolutional, pooling
 
 
 # TensorFlow does not support full convolution.
-if K._BACKEND == 'theano':
+if K.backend() == 'theano':
     _convolution_border_modes = ['valid', 'same', 'full']
 else:
     _convolution_border_modes = ['valid', 'same']
@@ -214,7 +214,7 @@ def test_atrous_conv_2d():
                            input_shape=(nb_samples, nb_row, nb_col, stack_size))
 
 
-@pytest.mark.skipif(K._BACKEND != 'tensorflow', reason="Requires TF backend")
+@pytest.mark.skipif(K.backend() != 'tensorflow', reason='Requires TF backend')
 @keras_test
 def test_separable_conv_2d():
     nb_samples = 2
@@ -666,6 +666,15 @@ def test_cropping_2d():
                              cropping[1][0]: -cropping[1][1],
                              :]
     assert_allclose(np_output, expected_out)
+    # another correctness test (no cropping)
+    cropping = ((0, 0), (0, 0))
+    layer = convolutional.Cropping2D(cropping=cropping,
+                                     dim_ordering=dim_ordering)
+    layer.build(input.shape)
+    output = layer(K.variable(input))
+    np_output = K.eval(output)
+    # compare with input
+    assert_allclose(np_output, input)
 
 
 def test_cropping_3d():
@@ -709,6 +718,15 @@ def test_cropping_3d():
                              cropping[2][0]: -cropping[2][1],
                              :]
     assert_allclose(np_output, expected_out)
+    # another correctness test (no cropping)
+    cropping = ((0, 0), (0, 0), (0, 0))
+    layer = convolutional.Cropping3D(cropping=cropping,
+                                     dim_ordering=dim_ordering)
+    layer.build(input.shape)
+    output = layer(K.variable(input))
+    np_output = K.eval(output)
+    # compare with input
+    assert_allclose(np_output, input)
 
 if __name__ == '__main__':
     pytest.main([__file__])

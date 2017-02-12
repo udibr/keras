@@ -77,9 +77,26 @@ class TestBackend(object):
 
         check_two_tensor_operation('batch_dot', (4, 2, 3), (4, 5, 3),
                                    axes=(2, 2))
+        check_two_tensor_operation('batch_dot', (32, 20), (32, 20), axes=1)
+        check_two_tensor_operation('batch_dot', (32, 20), (32, 20), axes=(1, 1))
         check_single_tensor_operation('transpose', (4, 2))
         check_single_tensor_operation('reverse', (4, 3, 2), axes=1)
         check_single_tensor_operation('reverse', (4, 3, 2), axes=(1, 2))
+
+    def test_batch_dot_shape(self):
+        x_batch = KTF.ones(shape=(32, 20))
+        y_batch = KTF.ones(shape=(32, 20))
+        xy_batch_dot = KTF.batch_dot(x_batch, y_batch, axes=1)
+        assert_allclose(KTF.eval(xy_batch_dot), np.ones((32, 1)) * 20, atol=1e-05)
+        xy_batch_dot = KTF.batch_dot(x_batch, y_batch, axes=0)
+        assert_allclose(KTF.eval(xy_batch_dot), np.ones((20, 1)) * 32, atol=1e-05)
+        # making sure swapping axes when ndim == 2 works
+        x_batch = KTF.ones(shape=(32, 20))
+        y_batch = KTF.ones(shape=(20, 32))
+        xy_batch_dot = KTF.batch_dot(x_batch, y_batch, axes=(0, 1))
+        assert_allclose(KTF.eval(xy_batch_dot), np.ones((20, 1)) * 32, atol=1e-05)
+        xy_batch_dot = KTF.batch_dot(x_batch, y_batch, axes=(1, 0))
+        assert_allclose(KTF.eval(xy_batch_dot), np.ones((32, 1)) * 20, atol=1e-05)
 
     def test_shape_operations(self):
         # concatenate
@@ -790,7 +807,7 @@ class TestBackend(object):
 
         # len max_time_steps array of batch_size x depth matrices
         inputs = ([input_prob_matrix_0[t, :][np.newaxis, :]
-                  for t in range(seq_len_0)] +  # Pad to max_time_steps = 8
+                   for t in range(seq_len_0)] +  # Pad to max_time_steps = 8
                   2 * [np.zeros((1, depth), dtype=np.float32)])
 
         inputs = KTF.variable(np.asarray(inputs).transpose((1, 0, 2)))
@@ -899,7 +916,7 @@ class TestBackend(object):
     def test_foldl(self):
         x = np.random.rand(10, 3).astype(np.float32)
         for K in [KTF, KTH]:
-            kx = K.eval(K.foldl(lambda a, b: a+b, x))
+            kx = K.eval(K.foldl(lambda a, b: a + b, x))
 
             assert (3,) == kx.shape
             assert_allclose(x.sum(axis=0), kx, atol=1e-05)
@@ -911,8 +928,8 @@ class TestBackend(object):
         # right to left we have no such problem and the result is larger
         x = np.array([1e-20, 1e-20, 10, 10, 10], dtype=np.float32)
         for K in [KTF, KTH]:
-            p1 = K.eval(K.foldl(lambda a, b: a*b, x))
-            p2 = K.eval(K.foldr(lambda a, b: a*b, x))
+            p1 = K.eval(K.foldl(lambda a, b: a * b, x))
+            p2 = K.eval(K.foldr(lambda a, b: a * b, x))
 
             assert p1 < p2
             assert 9e-38 < p2 <= 1e-37

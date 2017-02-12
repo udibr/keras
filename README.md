@@ -55,9 +55,9 @@ Stacking layers is as easy as `.add()`:
 from keras.layers import Dense, Activation
 
 model.add(Dense(output_dim=64, input_dim=100))
-model.add(Activation("relu"))
+model.add(Activation('relu'))
 model.add(Dense(output_dim=10))
-model.add(Activation("softmax"))
+model.add(Activation('softmax'))
 ```
 
 Once your model looks good, configure its learning process with `.compile()`:
@@ -118,7 +118,7 @@ Keras uses the following dependencies:
 *When using the TensorFlow backend:*
 
 - TensorFlow
-    - [See installation instructions](https://github.com/tensorflow/tensorflow#download-and-setup).
+    - [See installation instructions](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/g3doc/get_started/os_setup.md)
 
 *When using the Theano backend:*
 
