@@ -423,10 +423,14 @@ class GeneratorEnqueuer(object):
         """
 
         def data_generator_task():
+            try:
+                g = iter(self._generator)
+            except:
+                g = self._generator
             while not self._stop_event.is_set():
                 try:
                     if self._pickle_safe or self.queue.qsize() < max_q_size:
-                        generator_output = next(self._generator)
+                        generator_output = next(g)
                         self.queue.put(generator_output)
                     else:
                         time.sleep(wait_time)
@@ -1494,8 +1498,8 @@ class Model(Container):
 
         if val_callbacks:
             val_callbacks = cbks.CallbackList(val_callbacks)
-            val_callbacks._set_model(callback_model)
-            val_callbacks._set_params({
+            val_callbacks.set_model(callback_model)
+            val_callbacks.set_params({
                 'nb_epoch': nb_epoch,
                 'nb_sample': samples_per_epoch,
                 'verbose': verbose,
@@ -1668,7 +1672,7 @@ class Model(Container):
         if val_callbacks:
             if isinstance(val_callbacks,list):
                 val_callbacks = cbks.CallbackList(val_callbacks)
-                val_callbacks._set_model(self)
+                val_callbacks.set_model(self)
 
             val_callbacks.on_train_begin()
             val_callbacks.on_epoch_begin(0)
