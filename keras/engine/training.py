@@ -1693,6 +1693,7 @@ class Model(Container):
                       callbacks=None,
                       validation_data=None,
                       validation_steps=None,
+                      val_callbacks=None,
                       class_weight=None,
                       max_q_size=10,
                       workers=1,
@@ -1725,6 +1726,7 @@ class Model(Container):
                 - a generator for the validation data
                 - a tuple (inputs, targets)
                 - a tuple (inputs, targets, sample_weights).
+            val_callbacks: list of callbacks to be called during validation.
             validation_steps: Only relevant if `validation_data`
                 is a generator. Total number of steps (batches of samples)
                 to yield from `generator` before stopping.
@@ -1808,6 +1810,18 @@ class Model(Container):
             'metrics': callback_metrics,
         })
         callbacks.on_train_begin()
+
+        if val_callbacks:
+            val_callbacks = cbks.CallbackList(val_callbacks)
+            val_callbacks.set_model(callback_model)
+            val_callbacks.set_params({
+                'epochs': epochs,
+                'steps': steps_per_epoch,
+                'verbose': verbose,
+                'do_validation': do_validation,
+                'metrics': callback_metrics,
+            })
+            val_callbacks.on_train_begin()
 
         if do_validation and not val_gen:
             if len(validation_data) == 2:
@@ -1894,6 +1908,7 @@ class Model(Container):
                                 validation_data,
                                 validation_steps,
                                 max_q_size=max_q_size,
+                                val_callbacks=val_callbacks,
                                 workers=workers,
                                 pickle_safe=pickle_safe)
                         else:
@@ -1920,11 +1935,13 @@ class Model(Container):
                 enqueuer.stop()
 
         callbacks.on_train_end()
+        if val_callbacks:
+            val_callbacks.on_train_end()
         return self.history
 
     @interfaces.legacy_generator_methods_support
     def evaluate_generator(self, generator, steps,
-                           max_q_size=10, workers=1, pickle_safe=False):
+                           max_q_size=10, val_callbacks=None, workers=1, pickle_safe=False):
         """Evaluates the model on a data generator.
 
         The generator should return the same kind of data
@@ -1936,6 +1953,7 @@ class Model(Container):
             steps: Total number of steps (batches of samples)
                 to yield from `generator` before stopping.
             max_q_size: maximum size for the generator queue
+            val_callbacks: list of callbacks to be called during validation.
             workers: maximum number of processes to spin up
                 when using process based threading
             pickle_safe: if True, use process based threading.
@@ -1968,6 +1986,10 @@ class Model(Container):
             enqueuer = GeneratorEnqueuer(generator, pickle_safe=pickle_safe)
             enqueuer.start(workers=workers, max_q_size=max_q_size)
 
+            if val_callbacks:
+                val_callbacks.on_train_begin()
+                val_callbacks.on_epoch_begin(0)
+                batch_index = 0
             while steps_done < steps:
                 generator_output = None
                 while enqueuer.is_running():
@@ -1992,7 +2014,12 @@ class Model(Container):
                                      '(x, y, sample_weight) '
                                      'or (x, y). Found: ' +
                                      str(generator_output))
+                if val_callbacks:
+                    val_callbacks.on_batch_begin(batch_index)
                 outs = self.test_on_batch(x, y, sample_weight=sample_weight)
+                if val_callbacks:
+                    val_callbacks.on_batch_end(batch_index)
+                    batch_index += 1
 
                 if isinstance(x, list):
                     batch_size = len(x[0])
@@ -2008,6 +2035,9 @@ class Model(Container):
         finally:
             if enqueuer is not None:
                 enqueuer.stop()
+
+        if val_callbacks:
+            val_callbacks.on_train_end()
 
         if not isinstance(outs, list):
             return np.average(np.asarray(all_outs),
