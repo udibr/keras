@@ -600,10 +600,14 @@ class GeneratorEnqueuer(object):
         """
 
         def data_generator_task():
+            try:
+                g = iter(self._generator)
+            except:
+                g = self._generator
             while not self._stop_event.is_set():
                 try:
                     if self._pickle_safe or self.queue.qsize() < max_q_size:
-                        generator_output = next(self._generator)
+                        generator_output = next(g)
                         self.queue.put(generator_output)
                     else:
                         time.sleep(wait_time)
