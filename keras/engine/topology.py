@@ -486,7 +486,7 @@ class Layer(object):
             - If necessary, we `build` the layer to match
                 the _keras_shape of the input(s).
             - We update the _keras_shape of every input tensor with
-                its new shape (obtained via self.get_output_shape_for).
+                its new shape (obtained via self.compute_output_shape).
                 This is done as part of _add_inbound_node().
             - We update the _keras_history of the output tensor(s)
                 with the current layer.
@@ -656,6 +656,10 @@ class Layer(object):
         # Returns
             An input shape tuple.
         """
+        if hasattr(self, 'get_output_shape_for'):
+            msg = "Class `{}.{}` defines `get_output_shape_for` but does not override `compute_output_shape`. " + \
+                  "If this is a Keras 1 layer, please implement `compute_output_shape` to support Keras 2."
+            warnings.warn(msg.format(type(self).__module__, type(self).__name__), stacklevel=2)
         return input_shape
 
     def compute_mask(self, inputs, mask=None):
@@ -1422,7 +1426,7 @@ class Container(Layer):
         get_weights
         set_weights
         get_config
-        get_output_shape_for
+        compute_output_shape
 
     # Class Methods
         from_config
@@ -2019,7 +2023,7 @@ class Container(Layer):
             for i in range(len(input_shapes)):
                 layer = self.input_layers[i]
                 input_shape = input_shapes[i]
-                # It's an input layer: get_output_shape_for is identity,
+                # It's an input layer: compute_output_shape is identity,
                 # and there is only one node and one tensor output.
                 shape_key = layer.name + '_0_0'
                 layers_to_output_shapes[shape_key] = input_shape

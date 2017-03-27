@@ -2,7 +2,7 @@
 
 - [How should I cite Keras?](#how-should-i-cite-keras)
 - [How can I run Keras on GPU?](#how-can-i-run-keras-on-gpu)
-- [What does \["sample", "batch", "epoch"\] mean?](#what-does-sample-batch-epoch-mean)
+- [What does "sample", "batch", "epoch" mean?](#what-does-sample-batch-epoch-mean)
 - [How can I save a Keras model?](#how-can-i-save-a-keras-model)
 - [Why is the training loss much higher than the testing loss?](#why-is-the-training-loss-much-higher-than-the-testing-loss)
 - [How can I obtain the output of an intermediate layer?](#how-can-i-obtain-the-output-of-an-intermediate-layer)
@@ -59,7 +59,7 @@ theano.config.floatX = 'float32'
 
 ---
 
-### What does \["sample", "batch", "epoch"\] mean?
+### What does "sample", "batch", "epoch" mean?
 
 Below are some common definitions that are necessary to know and understand to correctly utilize Keras:
 
@@ -225,7 +225,7 @@ layer_output = get_3rd_layer_output([X, 1])[0]
 
 You can do batch training using `model.train_on_batch(X, y)` and `model.test_on_batch(X, y)`. See the [models documentation](/models/sequential).
 
-Alternatively, you can write a generator that yields batches of training data and use the method `model.fit_generator(data_generator, samples_per_epoch, epochs)`.
+Alternatively, you can write a generator that yields batches of training data and use the method `model.fit_generator(data_generator, steps_per_epoch, epochs)`.
 
 You can see batch training in action in our [CIFAR10 example](https://github.com/fchollet/keras/blob/master/examples/cifar10_cnn.py).
 
@@ -320,6 +320,7 @@ To use statefulness in RNNs, you need to:
 
 - explicitly specify the batch size you are using, by passing a `batch_size` argument to the first layer in your model. E.g. `batch_size=32` for a 32-samples batch of sequences of 10 timesteps with 16 features per timestep.
 - set `stateful=True` in your RNN layer(s).
+- specify `shuffle=False` when calling fit().
 
 To reset the states accumulated:
 
