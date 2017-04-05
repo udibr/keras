@@ -31,13 +31,13 @@ class _Merge(Layer):
             tuple or None.
 
         # Raises
-            ValueError if shape1 and shape2 are not compaible for
-            element-wise operations
+            ValueError: if shape1 and shape2 are not compatible for
+                element-wise operations.
         """
         if None in [shape1, shape2]:
             return None
         elif len(shape1) < len(shape2):
-            return _compute_elemwise_op_output_shape(shape2, shape1)
+            return self._compute_elemwise_op_output_shape(shape2, shape1)
         elif len(shape2) == 0:
             return shape1
         output_shape = list(shape1[:-len(shape2)])
@@ -160,17 +160,10 @@ class _Merge(Layer):
         batch_sizes = set(batch_sizes)
         batch_sizes -= set([None])
         if len(batch_sizes) == 1:
-            output_shape = (batch_sizes[0],) + output_shape
+            output_shape = (list(batch_sizes)[0],) + output_shape
         else:
             output_shape = (None,) + output_shape
         return output_shape
-
-    def compute_output_shape(self, input_shape):
-        # Layers that change the shape should already implement
-        # compute_output_shape anyway
-        # TODO: If the merge layer in the future accepts broadcastable inputs
-        #       then both this function and build should be changed
-        return input_shape[0]
 
     def compute_mask(self, inputs, mask=None):
         if mask is None:

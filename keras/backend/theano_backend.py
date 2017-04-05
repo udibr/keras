@@ -615,7 +615,7 @@ def batch_normalization(x, mean, var, beta, gamma, epsilon=1e-3):
 
     if mean.ndim == 1:
         # based on TensorFlow's default: normalize along rightmost dimension
-        reduction_axes = range(x.ndim - 1)
+        reduction_axes = list(range(x.ndim - 1))
     else:
         reduction_axes = [i for i in range(x.ndim) if mean.broadcastable[i]]
 
@@ -1166,8 +1166,8 @@ def rnn(step_function, inputs, initial_states,
         initial_states: tensor with shape (samples, ...) (no time dimension),
             containing the initial values for the states used in
             the step function.
-        go_backwards: boolean. If True, do the iteration over
-            the time dimension in reverse order.
+        go_backwards: boolean. If True, do the iteration over the time
+            dimension in reverse order and return the reversed sequence.
         mask: binary tensor with shape (samples, time),
             with a zero for every element that is masked.
         constants: a list of constant values passed at each step.
