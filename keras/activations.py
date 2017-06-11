@@ -33,6 +33,10 @@ def softmax(x, axis=-1):
 def elu(x, alpha=1.0):
     return K.elu(x, alpha)
 
+def selu(x, alpha=1.6732632423543772848170429916717,
+         scale=1.0507009873554804934193349852946):
+    return scale*K.switch(x>=0.,x,alpha*K.exp(x)-alpha)
+
 
 def softplus(x):
     return K.softplus(x)
