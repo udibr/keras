@@ -1324,10 +1324,10 @@ class mLSTM(Recurrent):
             constraint=self.recurrent_constraint)
         self.m_recurrent_kernel = self.add_weight(
             shape=(self.units, self.units),
-            name='recurrent_kernel',
-            initializer=self.recurrent_initializer,
-            regularizer=self.recurrent_regularizer,
-            constraint=self.recurrent_constraint)
+            name='m_recurrent_kernel',
+            initializer=self.kernel_initializer,
+            regularizer=self.kernel_regularizer,
+            constraint=self.kernel_constraint)
 
         if self.use_bias:
             if self.unit_forget_bias:
