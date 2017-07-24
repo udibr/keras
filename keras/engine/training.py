@@ -1876,7 +1876,7 @@ class Model(Container):
                             val_outs = self.evaluate_generator(
                                 validation_data,
                                 validation_steps,
-                                max_queue_size=max_q_size,
+                                max_queue_size=max_queue_size,
                                 val_callbacks=val_callbacks,
                                 workers=workers,
                                 use_multiprocessing=use_multiprocessing)
