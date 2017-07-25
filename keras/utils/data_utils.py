@@ -562,10 +562,11 @@ class GeneratorEnqueuer(SequenceEnqueuer):
         """
 
         def data_generator_task():
+            g = iter(self._generator)
             while not self._stop_event.is_set():
                 try:
                     if self._use_multiprocessing or self.queue.qsize() < max_queue_size:
-                        generator_output = next(self._generator)
+                        generator_output = next(g)
                         self.queue.put(generator_output)
                     else:
                         time.sleep(self.wait_time)
