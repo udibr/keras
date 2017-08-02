@@ -15,7 +15,7 @@ except ImportError:
     from theano.sandbox.softsign import softsign as T_softsign
 
 import numpy as np
-from .common import _FLOATX, floatx, _EPSILON, image_data_format
+from .common import floatx, epsilon, image_data_format
 from ..utils.generic_utils import has_arg
 # Legacy functions
 from .common import set_image_dim_ordering, image_dim_ordering
@@ -25,7 +25,7 @@ py_sum = sum
 
 
 # INTERNAL UTILS
-theano.config.floatX = _FLOATX
+theano.config.floatX = floatx()
 _LEARNING_PHASE = T.scalar(dtype='uint8', name='keras_learning_phase')  # 0 = test, 1 = train
 _UID_PREFIXES = defaultdict(int)
 
@@ -53,11 +53,11 @@ def get_uid(prefix=''):
         An integer.
 
     # Example
-    ```
+    ```python
         >>> keras.backend.get_uid('dense')
-        >>> 1
+        1
         >>> keras.backend.get_uid('dense')
-        >>> 2
+        2
     ```
 
     """
@@ -167,29 +167,39 @@ def constant(value, dtype=None, shape=None, name=None):
 def is_keras_tensor(x):
     """Returns whether `x` is a Keras tensor.
 
+    A "Keras tensor" is a tensor that was returned by a Keras layer,
+    (`Layer` class) or by `Input`.
+
     # Arguments
-        x: a potential tensor.
+        x: A candidate tensor.
 
     # Returns
-        A boolean: whether the argument is a Keras tensor.
+        A boolean: Whether the argument is a Keras tensor.
 
     # Raises
-        ValueError: in case `x` is not a symbolic tensor.
+        ValueError: In case `x` is not a symbolic tensor.
 
     # Examples
     ```python
         >>> from keras import backend as K
+        >>> from keras.layers import Input, Dense
         >>> np_var = numpy.array([1, 2])
         >>> K.is_keras_tensor(np_var) # A numpy array is not a symbolic tensor.
         ValueError
-        >>> k_var = theano.shared(value=np.array([1,2,3]))
-        >>> K.is_keras_tensor(k_var) # A variable created directly from tensorflow/theano is not a Keras tensor.
+        >>> k_var = tf.placeholder('float32', shape=(1,1))
+        >>> K.is_keras_tensor(k_var) # A variable indirectly created outside of keras is not a Keras tensor.
         False
         >>> keras_var = K.variable(np_var)
-        >>> K.is_keras_tensor(keras_var) # A variable created with the keras backend is a Keras tensor.
-        True
+        >>> K.is_keras_tensor(keras_var)  # A variable created with the keras backend is not a Keras tensor.
+        False
         >>> keras_placeholder = K.placeholder(shape=(2, 4, 5))
-        >>> K.is_keras_tensor(keras_placeholder)  # A placeholder is a Keras tensor.
+        >>> K.is_keras_tensor(keras_placeholder)  # A placeholder is not a Keras tensor.
+        False
+        >>> keras_input = Input([10])
+        >>> K.is_keras_tensor(keras_input) # An Input is a Keras tensor.
+        True
+        >>> keras_layer_output = Dense(10)(keras_input)
+        >>> K.is_keras_tensor(keras_layer_output) # Any Keras layer output is a Keras tensor.
         True
     ```
     """
@@ -853,7 +863,7 @@ def repeat_elements(x, rep, axis):
     return y
 
 
-def resize_images(X, height_factor, width_factor, data_format):
+def resize_images(x, height_factor, width_factor, data_format):
     """Resize the images contained in a 4D tensor of shape
     - [batch, channels, height, width] (for 'channels_first' data_format)
     - [batch, height, width, channels] (for 'channels_last' data_format)
@@ -861,18 +871,18 @@ def resize_images(X, height_factor, width_factor, data_format):
     positive integers.
     """
     if data_format == 'channels_first':
-        output = repeat_elements(X, height_factor, axis=2)
+        output = repeat_elements(x, height_factor, axis=2)
         output = repeat_elements(output, width_factor, axis=3)
         return output
     elif data_format == 'channels_last':
-        output = repeat_elements(X, height_factor, axis=1)
+        output = repeat_elements(x, height_factor, axis=1)
         output = repeat_elements(output, width_factor, axis=2)
         return output
     else:
         raise ValueError('Invalid data_format:', data_format)
 
 
-def resize_volumes(X, depth_factor, height_factor, width_factor, data_format):
+def resize_volumes(x, depth_factor, height_factor, width_factor, data_format):
     """Resize the volume contained in a 5D tensor of shape
     - [batch, channels, depth, height, width] (for 'channels_first' data_format)
     - [batch, depth, height, width, channels] (for 'channels_last' data_format)
@@ -880,12 +890,12 @@ def resize_volumes(X, depth_factor, height_factor, width_factor, data_format):
     Both factors should be positive integers.
     """
     if data_format == 'channels_first':
-        output = repeat_elements(X, depth_factor, axis=2)
+        output = repeat_elements(x, depth_factor, axis=2)
         output = repeat_elements(output, height_factor, axis=3)
         output = repeat_elements(output, width_factor, axis=4)
         return output
     elif data_format == 'channels_last':
-        output = repeat_elements(X, depth_factor, axis=1)
+        output = repeat_elements(x, depth_factor, axis=1)
         output = repeat_elements(output, height_factor, axis=2)
         output = repeat_elements(output, width_factor, axis=3)
         return output
@@ -1518,7 +1528,7 @@ def categorical_crossentropy(target, output, from_logits=False):
         # scale preds so that the class probas of each sample sum to 1
         output /= output.sum(axis=-1, keepdims=True)
     # avoid numerical instability with _EPSILON clipping
-    output = T.clip(output, _EPSILON, 1.0 - _EPSILON)
+    output = T.clip(output, epsilon(), 1.0 - epsilon())
     return T.nnet.categorical_crossentropy(output, target)
 
 
@@ -1533,7 +1543,7 @@ def binary_crossentropy(target, output, from_logits=False):
     if from_logits:
         output = T.nnet.sigmoid(output)
     # avoid numerical instability with _EPSILON clipping
-    output = T.clip(output, _EPSILON, 1.0 - _EPSILON)
+    output = T.clip(output, epsilon(), 1.0 - epsilon())
     return T.nnet.binary_crossentropy(output, target)
 
 
@@ -1584,7 +1594,7 @@ def dropout(x, level, noise_shape=None, seed=None):
 
 def l2_normalize(x, axis=None):
     square_sum = T.sum(T.square(x), axis=axis, keepdims=True)
-    norm = T.sqrt(T.maximum(square_sum, _EPSILON))
+    norm = T.sqrt(T.maximum(square_sum, epsilon()))
     return x / norm
 
 

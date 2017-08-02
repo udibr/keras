@@ -11,8 +11,7 @@ from collections import defaultdict
 import numpy as np
 import os
 
-from .common import floatx
-from .common import _EPSILON
+from .common import floatx, epsilon
 from .common import image_data_format
 from ..utils.generic_utils import has_arg
 
@@ -361,18 +360,22 @@ def constant(value, dtype=None, shape=None, name=None):
 def is_keras_tensor(x):
     """Returns whether `x` is a Keras tensor.
 
+    A "Keras tensor" is a tensor that was returned by a Keras layer,
+    (`Layer` class) or by `Input`.
+
     # Arguments
-        x: a potential tensor.
+        x: A candidate tensor.
 
     # Returns
-        A boolean: whether the argument is a Keras tensor.
+        A boolean: Whether the argument is a Keras tensor.
 
     # Raises
-        ValueError: in case `x` is not a symbolic tensor.
+        ValueError: In case `x` is not a symbolic tensor.
 
     # Examples
     ```python
         >>> from keras import backend as K
+        >>> from keras.layers import Input, Dense
         >>> np_var = numpy.array([1, 2])
         >>> K.is_keras_tensor(np_var) # A numpy array is not a symbolic tensor.
         ValueError
@@ -380,10 +383,16 @@ def is_keras_tensor(x):
         >>> K.is_keras_tensor(k_var) # A variable indirectly created outside of keras is not a Keras tensor.
         False
         >>> keras_var = K.variable(np_var)
-        >>> K.is_keras_tensor(keras_var)  # A variable created with the keras backend is a Keras tensor.
-        True
+        >>> K.is_keras_tensor(keras_var)  # A variable created with the keras backend is not a Keras tensor.
+        False
         >>> keras_placeholder = K.placeholder(shape=(2, 4, 5))
-        >>> K.is_keras_tensor(keras_placeholder)  # A placeholder is a Keras tensor.
+        >>> K.is_keras_tensor(keras_placeholder)  # A placeholder is not a Keras tensor.
+        False
+        >>> keras_input = Input([10])
+        >>> K.is_keras_tensor(keras_input) # An Input is a Keras tensor.
+        True
+        >>> keras_layer_output = Dense(10)(keras_input)
+        >>> K.is_keras_tensor(keras_layer_output) # Any Keras layer output is a Keras tensor.
         True
     ```
     """
@@ -445,7 +454,7 @@ def shape(x):
         A symbolic shape (which is itself a tensor).
 
     # Examples
-    ```
+    ```python
         # TensorFlow example
         >>> from keras import backend as K
         >>> tf_session = K.get_session()
@@ -1789,24 +1798,43 @@ def repeat_elements(x, rep, axis):
         rep: Python integer, number of times to repeat.
         axis: Axis along which to repeat.
 
-    # Raises
-        ValueError: In case `x.shape[axis]` is undefined.
-
     # Returns
         A tensor.
     """
     x_shape = x.get_shape().as_list()
-    if x_shape[axis] is None:
-        raise ValueError('Axis ' + str(axis) + ' of input tensor '
-                         'should have a defined dimension, but is None. '
-                         'Full tensor shape: ' + str(tuple(x_shape)) + '. '
-                         'Typically you need to pass a fully-defined '
-                         '`input_shape` argument to your first layer.')
-    # slices along the repeat axis
-    splits = tf.split(value=x, num_or_size_splits=x_shape[axis], axis=axis)
-    # repeat each slice the given number of reps
-    x_rep = [s for s in splits for _ in range(rep)]
-    return concatenate(x_rep, axis)
+    # For static axis
+    if x_shape[axis] is not None:
+        # slices along the repeat axis
+        splits = tf.split(value=x, num_or_size_splits=x_shape[axis], axis=axis)
+        # repeat each slice the given number of reps
+        x_rep = [s for s in splits for _ in range(rep)]
+        return concatenate(x_rep, axis)
+
+    # Here we use tf.tile to mimic behavior of np.repeat so that
+    # we can handle dynamic shapes (that include None).
+    # To do that, we need an auxiliary axis to repeat elements along
+    # it and then merge them along the desired axis.
+
+    # Repeating
+    auxiliary_axis = axis + 1
+    x_shape = tf.shape(x)
+    x_rep = tf.expand_dims(x, axis=auxiliary_axis)
+    reps = np.ones(len(x.get_shape()) + 1)
+    reps[auxiliary_axis] = rep
+    x_rep = tf.tile(x_rep, reps)
+
+    # Merging
+    reps = np.delete(reps, auxiliary_axis)
+    reps[axis] = rep
+    reps = tf.constant(reps, dtype='int32')
+    x_shape = x_shape * reps
+    x_rep = tf.reshape(x_rep, x_shape)
+
+    # Fix shape representation
+    x_shape = x.get_shape().as_list()
+    x_rep.set_shape(x_shape)
+    x_rep._keras_shape = tuple(x_shape)
+    return x_rep
 
 
 def repeat(x, n):
@@ -2556,7 +2584,7 @@ def in_train_phase(x, alt, training=None):
             (tensor or callable that returns a tensor).
         training: Optional scalar tensor
             (or Python boolean, or Python integer)
-            specifing the learning phase.
+            specifying the learning phase.
 
     # Returns
         Either `x` or `alt` based on the `training` flag.
@@ -2599,7 +2627,7 @@ def in_test_phase(x, alt, training=None):
             (tensor or callable that returns a tensor).
         training: Optional scalar tensor
             (or Python boolean, or Python integer)
-            specifing the learning phase.
+            specifying the learning phase.
 
     # Returns
         Either `x` or `alt` based on `K.learning_phase`.
@@ -2710,8 +2738,8 @@ def categorical_crossentropy(target, output, from_logits=False):
                                 axis=len(output.get_shape()) - 1,
                                 keep_dims=True)
         # manual computation of crossentropy
-        epsilon = _to_tensor(_EPSILON, output.dtype.base_dtype)
-        output = tf.clip_by_value(output, epsilon, 1. - epsilon)
+        _epsilon = _to_tensor(epsilon(), output.dtype.base_dtype)
+        output = tf.clip_by_value(output, _epsilon, 1. - _epsilon)
         return - tf.reduce_sum(target * tf.log(output),
                                axis=len(output.get_shape()) - 1)
     else:
@@ -2736,8 +2764,8 @@ def sparse_categorical_crossentropy(target, output, from_logits=False):
     # Note: tf.nn.sparse_softmax_cross_entropy_with_logits
     # expects logits, Keras expects probabilities.
     if not from_logits:
-        epsilon = _to_tensor(_EPSILON, output.dtype.base_dtype)
-        output = tf.clip_by_value(output, epsilon, 1 - epsilon)
+        _epsilon = _to_tensor(epsilon(), output.dtype.base_dtype)
+        output = tf.clip_by_value(output, _epsilon, 1 - _epsilon)
         output = tf.log(output)
 
     output_shape = output.get_shape()
@@ -2770,8 +2798,8 @@ def binary_crossentropy(target, output, from_logits=False):
     # expects logits, Keras expects probabilities.
     if not from_logits:
         # transform back to logits
-        epsilon = _to_tensor(_EPSILON, output.dtype.base_dtype)
-        output = tf.clip_by_value(output, epsilon, 1 - epsilon)
+        _epsilon = _to_tensor(epsilon(), output.dtype.base_dtype)
+        output = tf.clip_by_value(output, _epsilon, 1 - _epsilon)
         output = tf.log(output / (1 - output))
 
     return tf.nn.sigmoid_cross_entropy_with_logits(labels=target,
@@ -3728,7 +3756,7 @@ def local_conv1d(inputs, kernel, kernel_size, strides, data_format=None):
         data_format: the data format, channels_first or channels_last
 
     # Returns
-        the tensor after 1d conv with un-shared weights, with shape (batch_size, output_lenght, filters)
+        the tensor after 1d conv with un-shared weights, with shape (batch_size, output_length, filters)
 
     # Raises
         ValueError: if `data_format` is neither `channels_last` or `channels_first`.
