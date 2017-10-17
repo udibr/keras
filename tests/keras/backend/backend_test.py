@@ -2,14 +2,35 @@ import pytest
 from numpy.testing import assert_allclose
 import numpy as np
 import scipy.sparse as sparse
+import warnings
+from keras.utils.test_utils import keras_test
 
 from keras import backend as K
-from keras.backend import theano_backend as KTH, floatx, set_floatx, variable
-from keras.backend import tensorflow_backend as KTF
+from keras.backend import floatx, set_floatx, variable
 from keras.utils.conv_utils import convert_kernel
-from keras.backend import cntk_backend as KC
 
-BACKENDS = [KTH, KTF, KC]
+BACKENDS = []  # Holds a list of all available back-ends
+
+try:
+    from keras.backend import cntk_backend as KC
+    BACKENDS.append(KC)
+except ImportError:
+    KC = None
+    warnings.warn('Could not import the CNTK backend')
+
+try:
+    from keras.backend import tensorflow_backend as KTF
+    BACKENDS.append(KTF)
+except ImportError:
+    KTF = None
+    warnings.warn('Could not import the TensorFlow backend.')
+
+try:
+    from keras.backend import theano_backend as KTH
+    BACKENDS.append(KTH)
+except ImportError:
+    KTH = None
+    warnings.warn('Could not import the Theano backend')
 
 
 def check_dtype(var, dtype):
@@ -66,6 +87,7 @@ def assert_list_keras_shape(z_list):
             assert z._keras_shape == z.shape
 
 
+@keras_test
 def check_single_tensor_operation(function_name, x_shape_or_val, backend_list, **kwargs):
     shape_or_val = kwargs.pop('shape_or_val', True)
     assert_value_equality = kwargs.pop('assert_value_equality', True)
@@ -94,6 +116,7 @@ def check_single_tensor_operation(function_name, x_shape_or_val, backend_list, *
     assert_list_keras_shape(z_list)
 
 
+@keras_test
 def check_two_tensor_operation(function_name, x_shape_or_val,
                                y_shape_or_val, backend_list, **kwargs):
     shape_or_val = kwargs.pop('shape_or_val', True)
@@ -132,6 +155,7 @@ def check_two_tensor_operation(function_name, x_shape_or_val,
     assert_list_keras_shape(z_list)
 
 
+@keras_test
 def check_composed_tensor_operations(first_function_name, first_function_args,
                                      second_function_name, second_function_args,
                                      input_shape, backend_list):
@@ -196,11 +220,6 @@ class TestBackend(object):
         check_single_tensor_operation('random_normal_variable', (2, 3), BACKENDS,
                                       mean=0., scale=1.,
                                       shape_or_val=False, assert_value_equality=False)
-
-        # not supported dtype
-        for dtype in ['int16', 'int32', 'int64', 'uint8', 'uint16', 'double']:
-            with pytest.raises(ValueError):
-                ztf = KTF.random_normal_variable((2, 3), 0, 1, dtype=dtype)
 
     @pytest.mark.parametrize('k', [KTF], ids=['TensorFlow'])
     def test_batch_dot_shape(self, k):
@@ -463,162 +482,95 @@ class TestBackend(object):
 
     def test_rnn(self):
         # implement a simple RNN
-        input_dim = 8
-        output_dim = 4
-        timesteps = 5
+        num_samples = 4
+        input_dim = 5
+        output_dim = 3
+        timesteps = 6
 
-        input_val = np.random.random((32, timesteps, input_dim))
-        init_state_val = np.random.random((32, output_dim))
-        W_i_val = np.random.random((input_dim, output_dim))
-        W_o_val = np.random.random((output_dim, output_dim))
+        input_val = np.random.random((num_samples, timesteps, input_dim)).astype(np.float32)
+        init_state_val = np.random.random((num_samples, output_dim)).astype(np.float32)
+        W_i_val = np.random.random((input_dim, output_dim)).astype(np.float32)
+        W_o_val = np.random.random((output_dim, output_dim)).astype(np.float32)
+        np_mask = np.random.randint(2, size=(num_samples, timesteps))
 
-        def rnn_step_fn(input_dim, output_dim, K):
-            W_i = K.variable(W_i_val)
-            W_o = K.variable(W_o_val)
+        def rnn_step_fn(input_dim, output_dim, k):
+            W_i = k.variable(W_i_val)
+            W_o = k.variable(W_o_val)
 
             def step_function(x, states):
                 assert len(states) == 1
                 prev_output = states[0]
-                output = K.dot(x, W_i) + K.dot(prev_output, W_o)
+                output = k.dot(x, W_i) + k.dot(prev_output, W_o)
                 return output, [output]
 
             return step_function
 
         # test default setup
-        last_output_list = []
-        outputs_list = []
-        state_list = []
-
-        unrolled_last_output_list = []
-        unrolled_outputs_list = []
-        unrolled_states_list = []
-
-        backwards_last_output_list = []
-        backwards_outputs_list = []
-        backwards_states_list = []
-
-        bwd_unrolled_last_output_list = []
-        bwd_unrolled_outputs_list = []
-        bwd_unrolled_states_list = []
-
-        masked_last_output_list = []
-        masked_outputs_list = []
-        masked_states_list = []
-
-        unrolled_masked_last_output_list = []
-        unrolled_masked_outputs_list = []
-        unrolled_masked_states_list = []
+        last_output_list = [[], [], [], [], [], []]
+        outputs_list = [[], [], [], [], [], []]
+        state_list = [[], [], [], [], [], []]
 
         for k in BACKENDS:
             rnn_fn = rnn_step_fn(input_dim, output_dim, k)
             inputs = k.variable(input_val)
             initial_states = [k.variable(init_state_val)]
-            last_output, outputs, new_states = k.rnn(rnn_fn, inputs,
-                                                     initial_states,
-                                                     go_backwards=False,
-                                                     mask=None)
-
-            last_output_list.append(k.eval(last_output))
-            outputs_list.append(k.eval(outputs))
-            assert len(new_states) == 1
-            state_list.append(k.eval(new_states[0]))
-            # test unroll
-            unrolled_last_output, unrolled_outputs, unrolled_new_states = k.rnn(
-                rnn_fn, inputs,
-                initial_states,
-                go_backwards=False,
-                mask=None,
-                unroll=True,
-                input_length=timesteps)
-
-            unrolled_last_output_list.append(k.eval(unrolled_last_output))
-            unrolled_outputs_list.append(k.eval(unrolled_outputs))
-            assert len(unrolled_new_states) == 1
-            unrolled_states_list.append(k.eval(unrolled_new_states[0]))
-
-            backwards_last_output, backwards_outputs, backwards_new_states = k.rnn(rnn_fn, inputs,
-                                                                                   initial_states,
-                                                                                   go_backwards=True,
-                                                                                   mask=None)
-            backwards_last_output_list.append(k.eval(backwards_last_output))
-            backwards_outputs_list.append(k.eval(backwards_outputs))
-            assert len(backwards_new_states) == 1
-            backwards_states_list.append(k.eval(backwards_new_states[0]))
-
-            bwd_unrolled_last_output, bwd_unrolled_outputs, bwd_unrolled_new_states = k.rnn(
-                rnn_fn, inputs,
-                initial_states,
-                go_backwards=True,
-                mask=None,
-                unroll=True,
-                input_length=timesteps)
-
-            bwd_unrolled_last_output_list.append(k.eval(bwd_unrolled_last_output))
-            bwd_unrolled_outputs_list.append(k.eval(bwd_unrolled_outputs))
-            assert len(bwd_unrolled_new_states) == 1
-            bwd_unrolled_states_list.append(k.eval(bwd_unrolled_new_states[0]))
-
-            np_mask = np.random.randint(2, size=(32, timesteps))
             mask = k.variable(np_mask)
 
-            masked_last_output, masked_outputs, masked_new_states = k.rnn(
-                rnn_fn, inputs,
-                initial_states,
-                go_backwards=False,
-                mask=mask)
-            masked_last_output_list.append(k.eval(masked_last_output))
-            masked_outputs_list.append(k.eval(masked_outputs))
-            assert len(masked_new_states) == 1
-            masked_states_list.append(k.eval(masked_new_states[0]))
+            kwargs_list = [
+                {'go_backwards': False, 'mask': None},
+                {'go_backwards': False, 'mask': None, 'unroll': True, 'input_length': timesteps},
+                {'go_backwards': True, 'mask': None},
+                {'go_backwards': True, 'mask': None, 'unroll': True, 'input_length': timesteps},
+                {'go_backwards': False, 'mask': mask},
+                {'go_backwards': False, 'mask': mask, 'unroll': True, 'input_length': timesteps},
+            ]
 
-            unrolled_masked_last_output, unrolled_masked_outputs, unrolled_masked_new_states = k.rnn(
-                rnn_fn, inputs,
-                initial_states,
-                go_backwards=False,
-                mask=mask,
-                unroll=True,
-                input_length=timesteps)
-            unrolled_masked_last_output_list.append(k.eval(unrolled_masked_last_output))
-            unrolled_masked_outputs_list.append(k.eval(unrolled_masked_outputs))
-            assert len(unrolled_masked_new_states) == 1
-            unrolled_masked_states_list.append(k.eval(unrolled_masked_new_states[0]))
+            for (i, kwargs) in enumerate(kwargs_list):
+                last_output, outputs, new_states = k.rnn(rnn_fn, inputs,
+                                                         initial_states,
+                                                         **kwargs)
 
-        assert_list_pairwise(last_output_list, shape=False, atol=1e-04)
-        assert_list_pairwise(outputs_list, shape=False, atol=1e-04)
-        assert_list_pairwise(state_list, shape=False, atol=1e-04)
-        assert_list_pairwise(backwards_states_list, shape=False, atol=1e-04)
-        assert_list_pairwise(backwards_last_output_list, shape=False, atol=1e-04)
-        assert_list_pairwise(backwards_outputs_list, shape=False, atol=1e-04)
+                last_output_list[i].append(k.eval(last_output))
+                outputs_list[i].append(k.eval(outputs))
+                assert len(new_states) == 1
+                state_list[i].append(k.eval(new_states[0]))
 
-        for l, u_l in zip(last_output_list, unrolled_last_output_list):
+        assert_list_pairwise(last_output_list[0], shape=False, atol=1e-04)
+        assert_list_pairwise(outputs_list[0], shape=False, atol=1e-04)
+        assert_list_pairwise(state_list[0], shape=False, atol=1e-04)
+        assert_list_pairwise(last_output_list[2], shape=False, atol=1e-04)
+        assert_list_pairwise(outputs_list[2], shape=False, atol=1e-04)
+        assert_list_pairwise(state_list[2], shape=False, atol=1e-04)
+
+        for l, u_l in zip(last_output_list[0], last_output_list[1]):
             assert_allclose(l, u_l, atol=1e-04)
 
-        for o, u_o in zip(outputs_list, unrolled_outputs_list):
+        for o, u_o in zip(outputs_list[0], outputs_list[1]):
             assert_allclose(o, u_o, atol=1e-04)
 
-        for s, u_s in zip(state_list, unrolled_states_list):
+        for s, u_s in zip(state_list[0], state_list[1]):
             assert_allclose(s, u_s, atol=1e-04)
 
-        for b_l, b_u_l in zip(backwards_last_output_list, bwd_unrolled_last_output_list):
+        for b_l, b_u_l in zip(last_output_list[2], last_output_list[3]):
             assert_allclose(b_l, b_u_l, atol=1e-04)
 
-        for b_o, b_u_o, in zip(backwards_outputs_list, bwd_unrolled_outputs_list):
+        for b_o, b_u_o in zip(outputs_list[2], outputs_list[3]):
             assert_allclose(b_o, b_u_o, atol=1e-04)
 
-        for b_s, b_u_s in zip(backwards_states_list, bwd_unrolled_states_list):
+        for b_s, b_u_s in zip(state_list[2], state_list[3]):
             assert_allclose(b_s, b_u_s, atol=1e-04)
 
-        for m_l, u_m_l, k in zip(masked_last_output_list, unrolled_masked_last_output_list, BACKENDS):
+        for m_l, u_m_l, k in zip(last_output_list[4], last_output_list[5], BACKENDS):
             # skip this compare on tensorflow
             if k != KTF:
                 assert_allclose(m_l, u_m_l, atol=1e-04)
 
-        for m_o, u_m_o, k in zip(masked_outputs_list, unrolled_masked_outputs_list, BACKENDS):
+        for m_o, u_m_o, k in zip(outputs_list[4], outputs_list[5], BACKENDS):
             # skip this compare on tensorflow
             if k != KTF:
                 assert_allclose(m_o, u_m_o, atol=1e-04)
 
-        for m_s, u_m_s, k in zip(masked_states_list, unrolled_masked_states_list, BACKENDS):
+        for m_s, u_m_s, k in zip(state_list[4], state_list[5], BACKENDS):
             if k != KTF:
                 assert_allclose(m_s, u_m_s, atol=1e-04)
 
@@ -696,14 +648,27 @@ class TestBackend(object):
                             rtol=1e-5)
 
     def test_switch(self):
+        # scalar
         val = np.random.random()
         z_list = []
         for k in BACKENDS:
             x = k.variable(val)
             x = k.switch(k.greater_equal(x, 0.5), x * 0.1, x * 0.2)
             z_list.append(k.eval(x))
-
         assert_list_pairwise(z_list)
+        # non scalar
+        shapes = []
+        shapes.append([(4, 3, 2), (4, 3, 2), (4, 3, 2)])
+        shapes.append([(4, 3,), (4, 3, 2), (4, 3, 2)])
+        shapes.append([(4,), (4, 3, 2), (4, 3, 2)])
+        for s in shapes:
+            z_list = []
+            arrays = list(map(np.random.random, s))
+            for k in BACKENDS:
+                x, then_expr, else_expr = map(k.variable, arrays)
+                cond = k.greater_equal(x, 0.5)
+                z_list.append(k.eval(k.switch(cond, then_expr, else_expr)))
+            assert_list_pairwise(z_list)
 
     def test_dropout(self):
         val = np.random.random((100, 100))
@@ -741,7 +706,7 @@ class TestBackend(object):
         # cross_entropy call require the label is a valid probability distribution,
         # otherwise it is garbage in garbage out...
         # due to the algo difference, we can't guarantee CNTK has the same result on the garbage input.
-        # so create a seperate test case for valid lable input
+        # so create a separate test case for valid label input
         check_two_tensor_operation('categorical_crossentropy', (4, 2), (4, 2), [KTH, KTF], from_logits=True)
         xval = np.asarray([[0.26157712, 0.0432167], [-0.43380741, 0.30559841],
                            [0.20225059, -0.38956559], [-0.13805378, 0.08506755]], dtype=np.float32)
@@ -764,7 +729,7 @@ class TestBackend(object):
         targets = np.random.randint(num_classes, size=batch_size, dtype='int32')
 
         # (k == 0 or k > num_classes) does not raise an error but just return an unmeaningful tensor.
-        for k in range(0, num_classes + 1):
+        for k in range(num_classes + 1):
             z_list = [b.eval(b.in_top_k(b.variable(predictions, dtype='float32'),
                                         b.variable(targets, dtype='int32'), k))
                       for b in [KTH, KTF]]
@@ -915,46 +880,6 @@ class TestBackend(object):
             assert np.max(rand) == 1
             assert np.min(rand) == 0
 
-    '''need special handle for different backend'''
-
-    def test_internal_conv_utils(self):
-        xshape = (5, 4, 3, 2)
-        xval = np.random.random(xshape)
-        xtf = KTF.variable(xval)
-        ztf = KTF._preprocess_deconv_output_shape(xtf, xshape, 'channels_first')
-        assert ztf == (5, 3, 2, 4)
-
-        for dtype in [None, 'float64']:
-            xval = np.random.random((5, 4, 3, 2))
-            xtf = KTF.variable(xval, dtype=dtype)
-            ztf = KTF.eval(KTF._preprocess_conv2d_input(xtf, 'channels_first'))
-            assert ztf.shape == (5, 3, 2, 4)
-
-            xval = np.random.random((6, 5, 4, 3, 2))
-            xtf = KTF.variable(xval, dtype=dtype)
-            ztf = KTF.eval(KTF._preprocess_conv3d_input(xtf, 'channels_first'))
-            assert ztf.shape == (6, 4, 3, 2, 5)
-
-            xval = np.random.random((5, 4, 3, 2))
-            xtf = KTF.variable(xval, dtype=dtype)
-            ztf = KTF.eval(KTF._preprocess_conv2d_kernel(xtf, 'channels_first'))
-            assert ztf.shape == (3, 2, 4, 5)
-
-            xval = np.random.random((6, 5, 4, 3, 2))
-            xtf = KTF.variable(xval, dtype=dtype)
-            ztf = KTF.eval(KTF._preprocess_conv3d_kernel(xtf, 'channels_first'))
-            assert ztf.shape == (4, 3, 2, 5, 6)
-
-        xval = np.random.random((5, 4, 3, 2))
-        xtf = KTF.variable(xval)
-        ztf = KTF.eval(KTF._postprocess_conv2d_output(xtf, 'channels_first'))
-        assert ztf.shape == (5, 2, 4, 3)
-
-        xval = np.random.random((6, 5, 4, 3, 2))
-        xtf = KTF.variable(xval)
-        ztf = KTF.eval(KTF._postprocess_conv3d_output(xtf, 'channels_first'))
-        assert ztf.shape == (6, 2, 5, 4, 3)
-
     def test_pooling_invalid_use(self):
         for (input_shape, pool_size) in zip([(5, 10, 12, 3), (5, 10, 12, 6, 3)], [(2, 2), (2, 2, 2)]):
             for k in BACKENDS:
@@ -1075,7 +1000,7 @@ class TestBackend(object):
                                        BACKENDS, cntk_dynamicity=True,
                                        data_format=data_format)
 
-        # Test invalid use casess
+        # Test invalid use cases
         for k in BACKENDS:
             x = k.variable(np.random.random(x_shape))
             b = k.variable(np.random.random(bias_shape))
@@ -1089,15 +1014,21 @@ class TestBackend(object):
                 x_shape = (1, 4) + shape
             else:
                 x_shape = (1,) + shape + (4,)
-            xth = KTH.variable(np.random.random(x_shape))
-            xtf = KTF.variable(np.random.random(x_shape))
+            x_val = np.random.random(x_shape).astype(np.float32)
+            xth = KTH.variable(x_val)
+            xtf = KTF.variable(x_val)
+            xc = KC.placeholder(x_shape)
             zth, _, _ = KTH.normalize_batch_in_training(xth, None, None,
                                                         reduction_axes='per-activation')
             ztf, _, _ = KTF.normalize_batch_in_training(xtf, None, None,
                                                         reduction_axes=[0, 1, 2, 3])
+            zc, _, _ = KC.normalize_batch_in_training(xc, None, None,
+                                                      reduction_axes=[0, 1, 2, 3])
             zth = KTH.eval(zth)
             ztf = KTF.eval(ztf)
+            zc = KC.function([xc], [zc])([x_val])[0]
             assert zth.shape == ztf.shape
+            assert zth.shape == zc.shape
 
     def test_ctc(self):
         # simplified version of TensorFlow's test
@@ -1437,6 +1368,14 @@ class TestBackend(object):
 
         # Restore old value
         set_floatx(old_floatx)
+
+    def test_variable_support_bool_dtype(self):
+        # Github issue: 7819
+        if K.backend() == 'tensorflow':
+            assert K.dtype(K.variable(1, dtype='int16')) == 'int16'
+            assert K.dtype(K.variable(False, dtype='bool')) == 'bool'
+            with pytest.raises(TypeError):
+                K.variable('', dtype='unsupported')
 
 
 if __name__ == '__main__':

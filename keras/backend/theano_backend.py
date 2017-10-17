@@ -118,13 +118,15 @@ def _prepare_name(name, default):
     return prefix + '/' + name
 
 
-def variable(value, dtype=None, name=None):
+def variable(value, dtype=None, name=None, constraint=None):
     """Instantiates a variable and returns it.
 
     # Arguments
         value: Numpy array, initial value of the tensor.
         dtype: Tensor type.
         name: Optional name string for the tensor.
+        constraint: Optional projection function to be
+            applied to the variable after an optimizer update.
 
     # Returns
         A variable instance (with Keras metadata included).
@@ -147,6 +149,7 @@ def variable(value, dtype=None, name=None):
                                  strict=False)
     variable._keras_shape = value.shape
     variable._uses_learning_phase = False
+    variable.constraint = constraint
     return variable
 
 
@@ -231,7 +234,20 @@ def placeholder(shape=None, ndim=None, dtype=None, sparse=False, name=None):
         x = T.TensorType(dtype, broadcast)(name)
     x._keras_shape = shape
     x._uses_learning_phase = False
+    x._theano_placeholder = True
     return x
+
+
+def is_placeholder(x):
+    """Returns whether `x` is a placeholder.
+
+    # Arguments
+        x: A candidate placeholder.
+
+    # Returns
+        Boolean.
+    """
+    return hasattr(x, '_theano_placeholder') and x._theano_placeholder
 
 
 def shape(x):
@@ -1143,8 +1159,8 @@ def reverse(x, axes):
     return x[slices]
 
 
-def pattern_broadcast(x, broatcastable):
-    return T.patternbroadcast(x, broatcastable)
+def pattern_broadcast(x, broadcastable):
+    return T.patternbroadcast(x, broadcastable)
 
 # VALUE MANIPULATION
 
@@ -1291,6 +1307,9 @@ def rnn(step_function, inputs, initial_states,
     if constants is None:
         constants = []
 
+    global uses_learning_phase
+    uses_learning_phase = False
+
     if mask is not None:
         if mask.ndim == ndim - 1:
             mask = expand_dims(mask)
@@ -1307,6 +1326,8 @@ def rnn(step_function, inputs, initial_states,
             states = initial_states
             for i in indices:
                 output, new_states = step_function(inputs[i], states + constants)
+                if getattr(output, '_uses_learning_phase', False):
+                    uses_learning_phase = True
 
                 if len(successive_outputs) == 0:
                     prev_output = zeros_like(output)
@@ -1336,6 +1357,9 @@ def rnn(step_function, inputs, initial_states,
 
             def _step(inputs, mask, output_tm1, *states):
                 outputs, new_states = step_function(inputs, states)
+                if getattr(outputs, '_uses_learning_phase', False):
+                    global uses_learning_phase
+                    uses_learning_phase = True
                 # output previous output if masked.
                 outputs = T.switch(mask, outputs, output_tm1)
                 return_states = []
@@ -1368,6 +1392,8 @@ def rnn(step_function, inputs, initial_states,
             states = initial_states
             for i in indices:
                 outputs, states = step_function(inputs[i], states + constants)
+                if getattr(outputs, '_uses_learning_phase', False):
+                    uses_learning_phase = True
                 successive_outputs.append(outputs)
                 successive_states.append(states)
             outputs = T.stack(*successive_outputs)
@@ -1378,11 +1404,15 @@ def rnn(step_function, inputs, initial_states,
         else:
             def _step(inputs, *states):
                 outputs, new_states = step_function(inputs, states)
+                if getattr(outputs, '_uses_learning_phase', False):
+                    global uses_learning_phase
+                    uses_learning_phase = True
                 return [outputs] + new_states
 
-            # Theano likes to make shape==1 dimensions in the initial states (outputs_info) broadcastable
+            # Theano likes to make shape==1 dimensions
+            # in the initial states (outputs_info) broadcastable
             if len(initial_states) > 0:
-                initial_states[0] = T.unbroadcast(initial_states[0], 1)
+                initial_states[0] = T.unbroadcast(initial_states[0], 0, 1)
 
             results, _ = theano.scan(
                 _step,
@@ -1405,6 +1435,7 @@ def rnn(step_function, inputs, initial_states,
     axes = [1, 0] + list(range(2, outputs.ndim))
     outputs = outputs.dimshuffle(axes)
     states = [T.squeeze(state[-1]) for state in states]
+    last_output._uses_learning_phase = uses_learning_phase
     return last_output, outputs, states
 
 
@@ -1426,6 +1457,12 @@ def switch(condition, then_expression, else_expression):
         then_expression = then_expression()
     if callable(else_expression):
         else_expression = else_expression()
+    cond_ndim = ndim(condition)
+    expr_ndim = ndim(then_expression)
+    if cond_ndim < expr_ndim:
+        ndim_diff = expr_ndim - cond_ndim
+        for _ in range(ndim_diff):
+            condition = expand_dims(condition)
     return T.switch(condition, then_expression, else_expression)
 
 
@@ -2233,7 +2270,7 @@ def truncated_normal(shape, mean=0.0, stddev=1.0, dtype=None, seed=None):
 # Theano implementation of CTC
 # Used with permission from Shawn Tan
 # https://github.com/shawntan/
-# Note that tensorflow's native CTC code is significantly
+# Note that TensorFlow's native CTC code is significantly
 # faster than this
 
 
